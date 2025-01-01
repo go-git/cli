@@ -2,8 +2,6 @@ module github.com/go-git/gogit
 
 go 1.23.4
 
-replace github.com/go-git/go-git/v5 => ../go-git
-
 require (
 	github.com/go-git/go-git/v5 v5.13.0
 	github.com/spf13/cobra v1.8.1
