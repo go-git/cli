@@ -53,16 +53,18 @@ func defaultAuth(ep *transport.Endpoint) transport.AuthMethod {
 	case "file", "git":
 		// Do nothing.
 	case "ssh":
+		a, err := ssh.NewSSHAgentAuth(ep.User)
+		if err != nil {
+			return nil
+		}
+
 		switch ep.Host {
 		case "localhost", "127.0.0.1":
-			a, err := ssh.NewSSHAgentAuth(ep.User)
-			if err != nil {
-				return nil
-			}
-
+			// Ignore host key verification for localhost.
 			a.HostKeyCallback = gossh.InsecureIgnoreHostKey()
-			return a
 		}
+
+		return a
 	case "http", "https":
 	}
 
