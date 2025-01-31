@@ -60,7 +60,12 @@ var pushCmd = &cobra.Command{
 
 		if ep == nil {
 			// Use the default remote URL
-			ep, err = transport.NewEndpoint(remote.Config().URLs[0])
+			urln := len(remote.Config().URLs) - 1
+			if urln < 0 {
+				return errors.New("no remote URLs")
+			}
+
+			ep, err = transport.NewEndpoint(remote.Config().URLs[urln])
 			if err != nil {
 				return err
 			}
@@ -88,6 +93,7 @@ var pushCmd = &cobra.Command{
 
 		err = remote.Push(&opts)
 		if errors.Is(err, git.NoErrAlreadyUpToDate) {
+			cmd.PrintErr("Everything up-to-date")
 			return nil
 		}
 
