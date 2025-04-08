@@ -30,6 +30,11 @@ var cloneCmd = &cobra.Command{
 		dir := path.Base(args[0])
 		if len(args) > 1 {
 			dir = args[1]
+		} else {
+			dir = strings.TrimSuffix(dir, ".git")
+			if cloneBare {
+				dir = dir + ".git"
+			}
 		}
 
 		ep, err := transport.NewEndpoint(args[0])
