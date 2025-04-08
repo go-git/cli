@@ -5,16 +5,16 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/go-git/go-git/v5/plumbing/transport"
-	"github.com/go-git/go-git/v5/plumbing/transport/ssh"
-	"github.com/go-git/go-git/v5/utils/trace"
+	"github.com/go-git/go-git/v6/plumbing/transport"
+	"github.com/go-git/go-git/v6/plumbing/transport/ssh"
+	"github.com/go-git/go-git/v6/utils/trace"
 	"github.com/spf13/cobra"
 	gossh "golang.org/x/crypto/ssh"
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "ggit [<args>] <command>",
-	Short: "ggit is a Git CLI that uses go-git as its backend.",
+	Use:   "gogit [<args>] <command>",
+	Short: "gogit is a Git CLI that uses go-git as its backend.",
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		return cmd.Usage()
 	},
