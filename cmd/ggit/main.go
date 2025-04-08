@@ -5,9 +5,9 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/go-git/go-git/v5/plumbing/transport"
-	"github.com/go-git/go-git/v5/plumbing/transport/ssh"
-	"github.com/go-git/go-git/v5/utils/trace"
+	"github.com/go-git/go-git/v6/plumbing/transport"
+	"github.com/go-git/go-git/v6/plumbing/transport/ssh"
+	"github.com/go-git/go-git/v6/utils/trace"
 	"github.com/spf13/cobra"
 	gossh "golang.org/x/crypto/ssh"
 )
