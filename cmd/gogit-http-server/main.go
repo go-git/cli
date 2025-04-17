@@ -13,10 +13,14 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var port int
+var (
+	port   int
+	prefix string
+)
 
 func init() {
 	rootCmd.Flags().IntVarP(&port, "port", "p", 8080, "Port to run the HTTP server on")
+	rootCmd.Flags().StringVarP(&prefix, "prefix", "", "", "Prefix for the HTTP server routes")
 }
 
 var rootCmd = &cobra.Command{
@@ -37,6 +41,7 @@ var rootCmd = &cobra.Command{
 		gitmw := &githttp.Handler{
 			Loader:   loader,
 			ErrorLog: logger,
+			Prefix:   prefix,
 		}
 
 		handler := LoggingMiddleware(logger, gitmw)
