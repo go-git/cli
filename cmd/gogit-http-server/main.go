@@ -38,11 +38,10 @@ var rootCmd = &cobra.Command{
 		log.Printf("Using absolute path: %q", abs)
 		logger := log.Default()
 		loader := transport.NewFilesystemLoader(osfs.New(abs, osfs.WithBoundOS()), false)
-		gitmw := &githttp.Handler{
-			Loader:   loader,
+		gitmw := githttp.NewBackend(loader, &githttp.BackendOptions{
 			ErrorLog: logger,
 			Prefix:   prefix,
-		}
+		})
 
 		handler := LoggingMiddleware(logger, gitmw)
 		log.Printf("Starting server on %q for directory %q", addr, directory)

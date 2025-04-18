@@ -28,8 +28,8 @@ func (r *logWriter) WriteHeader(code int) {
 // LoggingMiddleware is the logging middleware where we log incoming and
 // outgoing requests for a multiplexer. It should be the first middleware
 // called so it can log request times accurately.
-func LoggingMiddleware(logger *log.Logger, next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func LoggingMiddleware(logger *log.Logger, next http.Handler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		addr := r.RemoteAddr
 		if colon := strings.LastIndex(addr, ":"); colon != -1 {
 			addr = addr[:colon]
@@ -46,5 +46,5 @@ func LoggingMiddleware(logger *log.Logger, next http.Handler) http.Handler {
 
 		elapsedTime := time.Since(startTime)
 		logger.Printf("%s %s %s %s %d %dB %v", addr, r.Method, r.RequestURI, r.Proto, writer.code, writer.bytes, elapsedTime)
-	})
+	}
 }
