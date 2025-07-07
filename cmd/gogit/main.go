@@ -47,6 +47,8 @@ func main() {
 		var rerr *transport.RemoteError
 		if errors.As(err, &rerr) {
 			fmt.Fprintln(os.Stderr, rerr)
+		} else {
+			fmt.Fprintln(os.Stderr, err)
 		}
 		os.Exit(1)
 	}
