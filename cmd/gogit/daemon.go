@@ -87,8 +87,8 @@ func (d *dirsLoader) Load(ep *transport.Endpoint) (storage.Storer, error) {
 				// repository.
 				dfs := d.fss[i]
 				okFile := filepath.Join(ep.Path, "git-daemon-export-ok")
-				stat, err := dfs.Stat(okFile)
-				if err != nil || (stat != nil && stat.IsDir()) {
+				stat, err := dfs.Lstat(okFile)
+				if err != nil || (stat != nil && !stat.Mode().IsRegular()) {
 					// If the file does not exist or is a directory,
 					// we skip this repository.
 					continue
