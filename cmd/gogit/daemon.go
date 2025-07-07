@@ -59,14 +59,14 @@ var _ transport.Loader = (*dirsLoader)(nil)
 
 // NewDirsLoader creates a new dirsLoader with the given directories.
 func NewDirsLoader(dirs []string, strict bool) *dirsLoader {
-	loaders := make([]transport.Loader, len(dirs))
-	for i, dir := range dirs {
+	var loaders []transport.Loader
+	for _, dir := range dirs {
 		abs, err := filepath.Abs(dir)
 		if err != nil {
 			continue
 		}
 		fs := osfs.New(abs, osfs.WithBoundOS())
-		loaders[i] = transport.NewFilesystemLoader(fs, strict)
+		loaders = append(loaders, transport.NewFilesystemLoader(fs, strict))
 	}
 	return &dirsLoader{loaders: loaders}
 }
