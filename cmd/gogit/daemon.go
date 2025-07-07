@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	gitserver "github.com/go-git/cli/server/git"
+	"github.com/go-git/go-billy/v6"
 	"github.com/go-git/go-billy/v6/osfs"
 	gitbackend "github.com/go-git/go-git/v6/backend/git"
 	"github.com/go-git/go-git/v6/plumbing/transport"
@@ -37,7 +38,7 @@ var daemonCmd = &cobra.Command{
 			dirs = append(dirs, ".")
 		}
 
-		loader := NewDirsLoader(dirs, false)
+		loader := NewDirsLoader(dirs, false, daemonExportAll)
 		addr := net.JoinHostPort(daemonListen, strconv.Itoa(daemonPort))
 		be := gitbackend.NewBackend(loader)
 		srv := &gitserver.Server{
@@ -52,30 +53,48 @@ var daemonCmd = &cobra.Command{
 }
 
 type dirsLoader struct {
-	loaders []transport.Loader
+	loaders   []transport.Loader
+	fss       []billy.Filesystem
+	exportAll bool
 }
 
 var _ transport.Loader = (*dirsLoader)(nil)
 
 // NewDirsLoader creates a new dirsLoader with the given directories.
-func NewDirsLoader(dirs []string, strict bool) *dirsLoader {
+func NewDirsLoader(dirs []string, strict, exportAll bool) *dirsLoader {
 	var loaders []transport.Loader
+	var fss []billy.Filesystem
 	for _, dir := range dirs {
 		abs, err := filepath.Abs(dir)
 		if err != nil {
 			continue
 		}
 		fs := osfs.New(abs, osfs.WithBoundOS())
+		fss = append(fss, fs)
 		loaders = append(loaders, transport.NewFilesystemLoader(fs, strict))
 	}
-	return &dirsLoader{loaders: loaders}
+	return &dirsLoader{loaders: loaders, fss: fss, exportAll: exportAll}
 }
 
 // Load implements transport.Loader.
 func (d *dirsLoader) Load(ep *transport.Endpoint) (storage.Storer, error) {
-	for _, loader := range d.loaders {
+	for i, loader := range d.loaders {
 		storer, err := loader.Load(ep)
 		if err == nil {
+			if !d.exportAll {
+				// We need to check if git-daemon-export-ok
+				// file exists and if it does not, we skip this
+				// repository.
+				dfs := d.fss[i]
+				okFile := filepath.Join(ep.Path, "git-daemon-export-ok")
+				stat, err := dfs.Stat(okFile)
+				if err != nil || (stat != nil && stat.IsDir()) {
+					// If the file does not exist or is a directory,
+					// we skip this repository.
+					continue
+				}
+
+			}
 			return storer, nil
 		}
 	}
