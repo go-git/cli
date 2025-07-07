@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -43,7 +44,10 @@ func init() {
 
 func main() {
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		var rerr *transport.RemoteError
+		if errors.As(err, &rerr) {
+			fmt.Fprintln(os.Stderr, rerr)
+		}
 		os.Exit(1)
 	}
 }
