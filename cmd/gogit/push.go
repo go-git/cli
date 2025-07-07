@@ -2,9 +2,11 @@ package main
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/go-git/go-git/v6"
 	"github.com/go-git/go-git/v6/config"
+	"github.com/go-git/go-git/v6/plumbing"
 	"github.com/go-git/go-git/v6/plumbing/transport"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -36,20 +38,38 @@ var pushCmd = &cobra.Command{
 			return err
 		}
 
+		cfg, err := r.Config()
+		if err != nil {
+			return fmt.Errorf("failed to get repository config: %w", err)
+		}
+
 		var ep *transport.Endpoint
 		remoteName := git.DefaultRemoteName
 		if len(args) > 0 {
-			ep, err = transport.NewEndpoint(args[0])
-			if err != nil {
-				// We have a remote name
-				remoteName = args[0]
+			isRemote := false
+			for remote := range cfg.Remotes {
+				if args[0] == remote {
+					remoteName = remote
+					isRemote = true
+					break
+				}
+			}
+			if !isRemote {
+				// Is this a repository URL?
+				ep, err = transport.NewEndpoint(args[0])
+				if err != nil {
+					// We have a remote name
+					remoteName = args[0]
+				}
 			}
 		}
 
 		var refspecs []config.RefSpec
 		if len(args) > 1 {
 			for _, arg := range args[1:] {
-				refspecs = append(refspecs, config.RefSpec(arg))
+				ref := plumbing.NewBranchReferenceName(arg)
+				str := fmt.Sprintf("+%s:refs/heads/%s", ref.String(), ref.Short())
+				refspecs = append(refspecs, config.RefSpec(str))
 			}
 		}
 
