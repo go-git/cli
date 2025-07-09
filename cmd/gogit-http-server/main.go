@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"path/filepath"
 
-	"github.com/go-git/go-billy/v5/osfs"
+	"github.com/go-git/go-billy/v6/osfs"
 	githttp "github.com/go-git/go-git/v6/backend/http"
 	"github.com/go-git/go-git/v6/plumbing/transport"
 	"github.com/spf13/cobra"
@@ -38,10 +38,7 @@ var rootCmd = &cobra.Command{
 		log.Printf("Using absolute path: %q", abs)
 		logger := log.Default()
 		loader := transport.NewFilesystemLoader(osfs.New(abs, osfs.WithBoundOS()), false)
-		gitmw := githttp.NewBackend(loader, &githttp.BackendOptions{
-			ErrorLog: logger,
-			Prefix:   prefix,
-		})
+		gitmw := githttp.NewBackend(loader)
 
 		handler := LoggingMiddleware(logger, gitmw)
 		log.Printf("Starting server on %q for directory %q", addr, directory)
