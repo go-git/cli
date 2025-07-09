@@ -1,0 +1,33 @@
+name: build
+
+on:
+  pull_request:
+
+  push:
+    branches:
+      - main
+
+  workflow_dispatch:
+
+permissions:
+  contents: none
+
+jobs:
+
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        go-version: [stable]
+        platform: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Setup Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: ${{ matrix.go-version }}
+
+      - run: make build
