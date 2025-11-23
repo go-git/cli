@@ -55,11 +55,15 @@ func main() {
 }
 
 func defaultAuth(ep *transport.Endpoint) transport.AuthMethod {
-	switch ep.Protocol {
+	switch ep.Scheme {
 	case "file", "git":
 		// Do nothing.
 	case "ssh":
-		a, err := ssh.NewSSHAgentAuth(ep.User)
+		if ep.User == nil {
+			return nil
+		}
+
+		a, err := ssh.NewSSHAgentAuth(ep.User.Username())
 		if err != nil {
 			return nil
 		}
