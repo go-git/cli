@@ -60,9 +60,10 @@ var cloneCmd = &cobra.Command{
 			opts.Progress = cmd.OutOrStdout()
 		}
 
-		fmt.Fprintf(cmd.ErrOrStderr(), "Cloning into '%s'...\n", dir) //nolint:errcheck
+		fmt.Fprintf(cmd.ErrOrStderr(), "Cloning into '%s'...\n", dir)
 
 		_, err = git.PlainClone(dir, &opts)
+
 		return err
 	},
 	DisableFlagsInUseLine: true,

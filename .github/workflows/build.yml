@@ -31,3 +31,6 @@ jobs:
           go-version: ${{ matrix.go-version }}
 
       - run: make build
+
+      - name: Validate
+        run: make validate

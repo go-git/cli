@@ -9,17 +9,19 @@ import (
 
 type logWriter struct {
 	http.ResponseWriter
+
 	code, bytes int
 }
 
 func (r *logWriter) Write(p []byte) (int, error) {
 	written, err := r.ResponseWriter.Write(p)
 	r.bytes += written
+
 	return written, err
 }
 
 // Note this is generally only called when sending an HTTP error, so it's
-// important to set the `code` value to 200 as a default
+// important to set the `code` value to 200 as a default.
 func (r *logWriter) WriteHeader(code int) {
 	r.code = code
 	r.ResponseWriter.WriteHeader(code)

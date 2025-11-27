@@ -34,22 +34,26 @@ var envToTarget = map[string]trace.Target{
 func init() {
 	// Set up tracing
 	var target trace.Target
+
 	for k, v := range envToTarget {
 		if ok, _ := strconv.ParseBool(os.Getenv(k)); ok {
 			target |= v
 		}
 	}
+
 	trace.SetTarget(target)
 }
 
 func main() {
-	if err := rootCmd.Execute(); err != nil {
+	err := rootCmd.Execute()
+	if err != nil {
 		var rerr *transport.RemoteError
 		if errors.As(err, &rerr) {
 			fmt.Fprintln(os.Stderr, rerr)
 		} else {
 			fmt.Fprintln(os.Stderr, err)
 		}
+
 		os.Exit(1)
 	}
 }
