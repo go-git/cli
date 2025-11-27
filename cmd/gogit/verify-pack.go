@@ -99,7 +99,7 @@ func verifyPack(path string, verbose bool) error {
 		}
 	}()
 
-	scanner, err := pf.Scanner()
+	scanner, err := pf.Scanner() //nolint:staticcheck
 	if err != nil {
 		return fmt.Errorf("failed to get scanner: %w", err)
 	}
@@ -131,7 +131,10 @@ func verifyPack(path string, verbose bool) error {
 			return fmt.Errorf("failed to scan object at offset %d", entry.Offset)
 		}
 
-		header := scanner.Data().Value().(packfile.ObjectHeader)
+		header, ok := scanner.Data().Value().(packfile.ObjectHeader)
+		if !ok {
+			return errors.New("failed to scan pack header")
+		}
 
 		// For delta objects, Size is the delta size.
 		// For regular objects, Size is the inflated size.
@@ -195,13 +198,17 @@ func verifyPack(path string, verbose bool) error {
 			return fmt.Errorf("failed to scan object at offset %d", objects[i].offset)
 		}
 
-		header := scanner.Data().Value().(packfile.ObjectHeader)
+		header, ok := scanner.Data().Value().(packfile.ObjectHeader)
+		if !ok {
+			return errors.New("failed to scan pack header")
+		}
 
 		// Calculate delta chain depth.
 		depth := 1
 
 		var baseHash plumbing.Hash
 
+		//exhaustive:ignore only delta types needs handling.
 		switch header.Type {
 		case plumbing.REFDeltaObject:
 			baseHash = header.Reference
@@ -236,7 +243,10 @@ func verifyPack(path string, verbose bool) error {
 					break
 				}
 
-				baseHeader := scanner.Data().Value().(packfile.ObjectHeader)
+				baseHeader, ok := scanner.Data().Value().(packfile.ObjectHeader)
+				if !ok {
+					break
+				}
 
 				depth++
 
@@ -326,6 +336,7 @@ func openPack(path string) (billy.File, billy.File, error) {
 		if verifyPackFixtureUrl {
 			f = fixtures.ByURL(path)
 		}
+
 		if verifyPackFixtureTag {
 			f = fixtures.ByTag(path)
 		}
@@ -335,6 +346,7 @@ func openPack(path string) (billy.File, billy.File, error) {
 		}
 
 		fixture := f.One()
+
 		return fixture.Idx(), fixture.Packfile(), nil
 	}
 

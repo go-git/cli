@@ -48,6 +48,7 @@ var daemonCmd = &cobra.Command{
 		}
 
 		log.Printf("Starting Git daemon on %q", addr)
+
 		return srv.ListenAndServe()
 	},
 }
@@ -62,17 +63,20 @@ var _ transport.Loader = (*dirsLoader)(nil)
 
 // NewDirsLoader creates a new dirsLoader with the given directories.
 func NewDirsLoader(dirs []string, strict, exportAll bool) *dirsLoader {
-	var loaders []transport.Loader
-	var fss []billy.Filesystem
+	loaders := make([]transport.Loader, 0, len(dirs))
+	fss := make([]billy.Filesystem, 0, len(dirs))
+
 	for _, dir := range dirs {
 		abs, err := filepath.Abs(dir)
 		if err != nil {
 			continue
 		}
+
 		fs := osfs.New(abs, osfs.WithBoundOS())
 		fss = append(fss, fs)
 		loaders = append(loaders, transport.NewFilesystemLoader(fs, strict))
 	}
+
 	return &dirsLoader{loaders: loaders, fss: fss, exportAll: exportAll}
 }
 
@@ -87,16 +91,18 @@ func (d *dirsLoader) Load(ep *transport.Endpoint) (storage.Storer, error) {
 				// repository.
 				dfs := d.fss[i]
 				okFile := filepath.Join(ep.Path, "git-daemon-export-ok")
+
 				stat, err := dfs.Lstat(okFile)
 				if err != nil || (stat != nil && !stat.Mode().IsRegular()) {
 					// If the file does not exist or is a directory,
 					// we skip this repository.
 					continue
 				}
-
 			}
+
 			return storer, nil
 		}
 	}
+
 	return nil, transport.ErrRepositoryNotFound
 }

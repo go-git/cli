@@ -27,7 +27,7 @@ func init() {
 var fetchCmd = &cobra.Command{
 	Use:   "fetch [<options>] [--] [<repository> [<refspec>...]]",
 	Short: "Download objects and refs from another repository",
-	RunE: func(cmd *cobra.Command, args []string) error {
+	RunE: func(cmd *cobra.Command, _ []string) error {
 		r, err := git.PlainOpen(".")
 		if err != nil {
 			return err

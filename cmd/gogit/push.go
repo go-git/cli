@@ -51,6 +51,7 @@ var pushCmd = &cobra.Command{
 				if args[0] == remote {
 					remoteName = remote
 					isRemote = true
+
 					break
 				}
 			}
@@ -114,6 +115,7 @@ var pushCmd = &cobra.Command{
 		err = remote.Push(&opts)
 		if errors.Is(err, git.NoErrAlreadyUpToDate) {
 			cmd.PrintErr("Everything up-to-date")
+
 			return nil
 		}
 
