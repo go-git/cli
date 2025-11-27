@@ -2,25 +2,32 @@ package main
 
 import (
 	"crypto"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
-	"github.com/go-git/go-billy/v6/osfs"
+	"github.com/go-git/go-billy/v6"
+	fixtures "github.com/go-git/go-git-fixtures/v5"
 	"github.com/go-git/go-git/v6/plumbing"
 	"github.com/go-git/go-git/v6/plumbing/format/idxfile"
 	"github.com/go-git/go-git/v6/plumbing/format/packfile"
 	"github.com/spf13/cobra"
 )
 
-var verifyPackVerbose bool
+var (
+	verifyPackVerbose    bool
+	verifyPackFixtureUrl bool
+	verifyPackFixtureTag bool
+)
 
 func init() {
 	verifyPackCmd.Flags().BoolVarP(&verifyPackVerbose, "verbose", "v", false, "Show detailed object information")
+	verifyPackCmd.Flags().BoolVarP(&verifyPackFixtureUrl, "fixture-url", "", false, "Use <file> as go-git-fixture url")
+	verifyPackCmd.Flags().BoolVarP(&verifyPackFixtureTag, "fixture-tag", "", false, "Use <file> as go-git-fixture tag")
 	rootCmd.AddCommand(verifyPackCmd)
 }
 
@@ -46,21 +53,11 @@ type objectInfo struct {
 }
 
 func verifyPack(path string, verbose bool) error {
-	idxPath := path
-	packPath := path
-
-	if strings.HasSuffix(path, ".idx") {
-		packPath = strings.TrimSuffix(path, ".idx") + ".pack"
-	} else if strings.HasSuffix(path, ".pack") {
-		idxPath = strings.TrimSuffix(path, ".pack") + ".idx"
-	} else {
-		return fmt.Errorf("file must have .idx or .pack extension")
-	}
-
-	idxFile, err := os.Open(idxPath)
+	idxFile, packFile, err := openPack(path)
 	if err != nil {
-		return fmt.Errorf("failed to open index file: %w", err)
+		return err
 	}
+
 	defer func() {
 		err = idxFile.Close()
 		if err != nil {
@@ -68,17 +65,6 @@ func verifyPack(path string, verbose bool) error {
 		}
 	}()
 
-	idx := idxfile.NewMemoryIndex(crypto.SHA1.Size())
-	dec := idxfile.NewDecoder(idxFile)
-	if err := dec.Decode(idx); err != nil {
-		return fmt.Errorf("failed to decode index file: %w", err)
-	}
-
-	fs := osfs.New(filepath.Dir(packPath))
-	packFile, err := fs.Open(filepath.Base(packPath))
-	if err != nil {
-		return fmt.Errorf("failed to open pack file: %w", err)
-	}
 	defer func() {
 		err = packFile.Close()
 		if err != nil {
@@ -86,19 +72,26 @@ func verifyPack(path string, verbose bool) error {
 		}
 	}()
 
+	idx := idxfile.NewMemoryIndex(crypto.SHA1.Size())
+
+	dec := idxfile.NewDecoder(idxFile)
+	if err := dec.Decode(idx); err != nil {
+		return fmt.Errorf("failed to decode index file: %w", err)
+	}
+
 	pf := packfile.NewPackfile(
 		packFile,
 		packfile.WithIdx(idx),
-		packfile.WithFs(fs),
 	)
+
 	defer func() {
-		err = pf.Close()
+		err := pf.Close()
 		if err != nil {
 			slog.Debug("failed to close Packfile object", "error", err)
 		}
 	}()
 
-	scanner, err := pf.Scanner() //nolint:staticcheck
+	scanner, err := pf.Scanner()
 	if err != nil {
 		return fmt.Errorf("failed to get scanner: %w", err)
 	}
@@ -112,9 +105,10 @@ func verifyPack(path string, verbose bool) error {
 
 	for {
 		entry, err := entries.Next()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
+
 		if err != nil {
 			return fmt.Errorf("failed to read entry: %w", err)
 		}
@@ -164,6 +158,7 @@ func verifyPack(path string, verbose bool) error {
 		if err != nil {
 			return fmt.Errorf("failed to get object at offset %d: %w", objects[i].offset, err)
 		}
+
 		objects[i].typ = obj.Type()
 	}
 
@@ -196,6 +191,7 @@ func verifyPack(path string, verbose bool) error {
 
 		// Calculate delta chain depth.
 		depth := 1
+
 		var baseHash plumbing.Hash
 
 		switch header.Type {
@@ -227,9 +223,11 @@ func verifyPack(path string, verbose bool) error {
 				if err != nil {
 					break
 				}
+
 				if !scanner.Scan() {
 					break
 				}
+
 				baseHeader := scanner.Data().Value().(packfile.ObjectHeader)
 
 				depth++
@@ -294,19 +292,64 @@ func verifyPack(path string, verbose bool) error {
 		for length := range chainLengths {
 			lengths = append(lengths, length)
 		}
+
 		sort.Ints(lengths)
 
 		for _, length := range lengths {
 			count := chainLengths[length]
+
 			objWord := "objects"
 			if count == 1 {
 				objWord = "object"
 			}
+
 			fmt.Printf("chain length = %d: %d %s\n", length, count, objWord)
 		}
 	}
 
-	fmt.Printf("%s: ok\n", packPath)
+	fmt.Printf("%s: ok\n", path)
 
 	return nil
+}
+
+func openPack(path string) (billy.File, billy.File, error) {
+	if verifyPackFixtureUrl || verifyPackFixtureTag {
+		var f fixtures.Fixtures
+		if verifyPackFixtureUrl {
+			f = fixtures.ByURL(path)
+		}
+		if verifyPackFixtureTag {
+			f = fixtures.ByTag(path)
+		}
+
+		if len(f) == 0 {
+			return nil, nil, fmt.Errorf("no fixture found for %q", path)
+		}
+
+		fixture := f.One()
+		return fixture.Idx(), fixture.Packfile(), nil
+	}
+
+	idxPath := path
+	packPath := path
+
+	if before, ok := strings.CutSuffix(path, ".idx"); ok {
+		packPath = before + ".pack"
+	} else if before, ok := strings.CutSuffix(path, ".pack"); ok {
+		idxPath = before + ".idx"
+	} else {
+		return nil, nil, errors.New("file must have .idx or .pack extension")
+	}
+
+	idxFile, err := os.Open(idxPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to open index file: %w", err)
+	}
+
+	packFile, err := os.Open(packPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to open pack file: %w", err)
+	}
+
+	return idxFile, packFile, nil
 }
