@@ -22,12 +22,14 @@ var (
 	verifyPackVerbose    bool
 	verifyPackFixtureUrl bool
 	verifyPackFixtureTag bool
+	verifyPackSHA256     bool
 )
 
 func init() {
 	verifyPackCmd.Flags().BoolVarP(&verifyPackVerbose, "verbose", "v", false, "Show detailed object information")
 	verifyPackCmd.Flags().BoolVarP(&verifyPackFixtureUrl, "fixture-url", "", false, "Use <file> as go-git-fixture url")
 	verifyPackCmd.Flags().BoolVarP(&verifyPackFixtureTag, "fixture-tag", "", false, "Use <file> as go-git-fixture tag")
+	verifyPackCmd.Flags().BoolVarP(&verifyPackSHA256, "sha256", "", false, "Treat the pack file as sha256")
 	rootCmd.AddCommand(verifyPackCmd)
 }
 
@@ -72,7 +74,12 @@ func verifyPack(path string, verbose bool) error {
 		}
 	}()
 
-	idx := idxfile.NewMemoryIndex(crypto.SHA1.Size())
+	ch := crypto.SHA1
+	if verifyPackSHA256 {
+		ch = crypto.SHA256
+	}
+
+	idx := idxfile.NewMemoryIndex(ch.Size())
 
 	dec := idxfile.NewDecoder(idxFile)
 	if err := dec.Decode(idx); err != nil {
@@ -82,6 +89,7 @@ func verifyPack(path string, verbose bool) error {
 	pf := packfile.NewPackfile(
 		packFile,
 		packfile.WithIdx(idx),
+		packfile.WithObjectIDSize(ch.Size()),
 	)
 
 	defer func() {
@@ -148,8 +156,8 @@ func verifyPack(path string, verbose bool) error {
 		if err != nil {
 			return fmt.Errorf("failed to stat pack file: %w", err)
 		}
-		// Pack file ends with a 20-byte SHA-1 checksum.
-		objects[len(objects)-1].packedSize = stat.Size() - objects[len(objects)-1].offset - int64(crypto.SHA1.Size())
+		// Pack file ends with a checksum (20-byte SHA-1 or 32-byte SHA-256).
+		objects[len(objects)-1].packedSize = stat.Size() - objects[len(objects)-1].offset - int64(ch.Size())
 	}
 
 	// Resolve actual types for all objects (after delta application).
