@@ -99,14 +99,17 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		if pollIntervalBase > shutdownPollIntervalMax {
 			pollIntervalBase = shutdownPollIntervalMax
 		}
+
 		return interval
 	}
 
 	timer := time.NewTimer(nextPollInterval())
+
 	for {
 		if s.closeIdleConns() {
 			return lnerr
 		}
+
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -123,6 +126,7 @@ func (s *Server) Close() error {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	err := s.closeListenersLocked()
 
 	// We need to unlock the mutex while waiting for listenersGroup.
@@ -131,9 +135,10 @@ func (s *Server) Close() error {
 	s.mu.Lock()
 
 	for c := range s.activeConn {
-		c.Close() //nolint:errcheck
+		c.Close()
 		delete(s.activeConn, c)
 	}
+
 	return err
 }
 
@@ -143,14 +148,17 @@ func (s *Server) ListenAndServe() error {
 	if s.shuttingDown() {
 		return ErrServerClosed
 	}
+
 	addr := s.Addr
 	if addr == "" {
 		addr = DefaultAddr // Default Git protocol port
 	}
+
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return err
 	}
+
 	return s.Serve(ln)
 }
 
@@ -158,8 +166,9 @@ func (s *Server) ListenAndServe() error {
 // listener.
 func (s *Server) Serve(ln net.Listener) error {
 	origLn := ln
+
 	l := &onceCloseListener{Listener: ln}
-	defer l.Close() //nolint:errcheck
+	defer l.Close()
 
 	if !s.trackListener(&l.Listener, true) {
 		return ErrServerClosed
@@ -175,28 +184,35 @@ func (s *Server) Serve(ln net.Listener) error {
 	}
 
 	var tempDelay time.Duration // how long to sleep on accept failure
+
 	ctx := context.WithValue(baseCtx, ServerContextKey, s)
+
 	for {
 		rw, err := l.Accept()
 		if err != nil {
 			if s.shuttingDown() {
 				return ErrServerClosed
 			}
-			if ne, ok := err.(net.Error); ok && ne.Temporary() {
+
+			var ne net.Error
+			if errors.As(err, &ne) {
 				if tempDelay == 0 {
 					tempDelay = 5 * time.Millisecond
 				} else {
 					tempDelay *= 2
 				}
-				if max := 1 * time.Second; tempDelay > max {
-					tempDelay = max
-				}
+
+				tempDelay = min(tempDelay, 1*time.Second)
+
 				s.logf("git: Accept error: %v; retrying in %v", err, tempDelay)
 				time.Sleep(tempDelay)
+
 				continue
 			}
+
 			return err
 		}
+
 		connCtx := ctx
 		if cc := s.ConnContext; cc != nil {
 			connCtx = cc(ctx, rw)
@@ -204,10 +220,12 @@ func (s *Server) Serve(ln net.Listener) error {
 				panic("git: ConnContext returned nil context")
 			}
 		}
+
 		tempDelay = 0
 		c := s.newConn(rw)
 		s.trackConn(c, true)
-		go c.serve(connCtx) //nolint:errcheck
+
+		go c.serve(connCtx)
 	}
 }
 
@@ -222,6 +240,7 @@ func (s *Server) closeListenersLocked() error {
 			err = cerr
 		}
 	}
+
 	return err
 }
 
@@ -247,19 +266,23 @@ func (s *Server) handler(ctx context.Context, c net.Conn, req *packp.GitProtoReq
 func (s *Server) trackListener(ln *net.Listener, add bool) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	if s.listeners == nil {
 		s.listeners = make(map[*net.Listener]struct{})
 	}
+
 	if add {
 		if s.shuttingDown() {
 			return false
 		}
+
 		s.listeners[ln] = struct{}{}
 		s.listenerGroup.Add(1)
 	} else {
 		delete(s.listeners, ln)
 		s.listenerGroup.Done()
 	}
+
 	return true
 }
 
@@ -267,20 +290,24 @@ func (s *Server) trackListener(ln *net.Listener, add bool) bool {
 // connection was found.
 func (s *Server) closeIdleConns() bool {
 	idle := true
+
 	for c := range s.activeConn {
 		unixSec := c.unixSec.Load()
 		if unixSec == 0 {
 			// New connection, skip it.
 			idle = false
+
 			continue
 		}
-		c.Close() //nolint:errcheck
+
+		c.Close()
 		delete(s.activeConn, c)
 	}
+
 	return idle
 }
 
-func (s *Server) logf(format string, args ...interface{}) {
+func (s *Server) logf(format string, args ...any) {
 	if s.ErrorLog != nil {
 		s.ErrorLog.Printf(format, args...)
 	}
@@ -289,10 +316,13 @@ func (s *Server) logf(format string, args ...interface{}) {
 func (s *Server) trackConn(c *conn, add bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	c.unixSec.Store(uint64(time.Now().Unix()))
+
 	if s.activeConn == nil {
 		s.activeConn = make(map[*conn]struct{})
 	}
+
 	if add {
 		s.activeConn[c] = struct{}{}
 	} else {
@@ -305,6 +335,7 @@ type conn struct {
 	// Conn is the underlying net.Conn that is being used to read and write Git
 	// protocol messages.
 	net.Conn
+
 	// unix timestamp in seconds when the connection was established
 	unixSec atomic.Uint64
 	// s the server that is handling this connection.
@@ -319,19 +350,13 @@ func (s *Server) newConn(rwc net.Conn) *conn {
 	}
 }
 
-// logf logs a message using the server's ErrorLog, if set.
-func (c *conn) logf(format string, args ...interface{}) {
-	if c.s.ErrorLog != nil {
-		c.s.logf(format, args...)
-	}
-}
-
 // serve serves a new connection.
 func (c *conn) serve(ctx context.Context) {
 	defer func() {
 		if err := recover(); err != nil {
 			c.s.logf("git: panic serving connection: %v", err)
-			if cerr := c.Conn.Close(); cerr != nil {
+
+			if cerr := c.Close(); cerr != nil {
 				c.s.logf("git: error closing connection: %v", cerr)
 			}
 		}
@@ -342,9 +367,11 @@ func (c *conn) serve(ctx context.Context) {
 	var req packp.GitProtoRequest
 	if err := req.Decode(r); err != nil {
 		c.s.logf("git: error decoding request: %v", err)
-		if rErr := renderError(c, fmt.Errorf("error decoding request: %s", transport.ErrInvalidRequest)); rErr != nil {
+
+		if rErr := renderError(c, fmt.Errorf("error decoding request: %w", transport.ErrInvalidRequest)); rErr != nil {
 			c.s.logf("git: error writing error response: %v", rErr)
 		}
+
 		return
 	}
 
@@ -355,12 +382,14 @@ func (c *conn) serve(ctx context.Context) {
 // multiple Close calls.
 type onceCloseListener struct {
 	net.Listener
+
 	once     sync.Once
 	closeErr error
 }
 
 func (oc *onceCloseListener) Close() error {
 	oc.once.Do(oc.close)
+
 	return oc.closeErr
 }
 
@@ -374,8 +403,10 @@ type contextKey struct {
 
 func renderError(rw io.WriteCloser, err error) error {
 	if _, err := pktline.WriteError(rw, err); err != nil {
-		rw.Close() //nolint:errcheck
+		rw.Close()
+
 		return err
 	}
+
 	return rw.Close()
 }

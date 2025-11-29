@@ -50,6 +50,7 @@ var pullCmd = &cobra.Command{
 		switch {
 		case errors.Is(err, git.NoErrAlreadyUpToDate):
 			cmd.Println("Already up-to-date.")
+
 			return nil
 		default:
 			return err

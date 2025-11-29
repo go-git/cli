@@ -45,12 +45,14 @@ var rootCmd = &cobra.Command{
 		if err := http.ListenAndServe(addr, handler); !errors.Is(err, http.ErrServerClosed) {
 			return err
 		}
+
 		return nil
 	},
 }
 
 func main() {
-	if err := rootCmd.Execute(); err != nil {
+	err := rootCmd.Execute()
+	if err != nil {
 		log.Fatal(err)
 	}
 }
