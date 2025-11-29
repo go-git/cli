@@ -6,6 +6,7 @@ toolchain go1.25.4
 
 require (
 	github.com/go-git/go-billy/v6 v6.0.0-20251120215217-80673c4ccbfb
+	github.com/go-git/go-git-fixtures/v5 v5.1.1
 	github.com/go-git/go-git/v6 v6.0.0-20251123162143-36fa81975a20
 	github.com/spf13/cobra v1.10.1
 	golang.org/x/crypto v0.45.0
