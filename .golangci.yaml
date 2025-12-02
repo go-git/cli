@@ -1,0 +1,41 @@
+version: "2"
+run:
+  concurrency: 3
+linters:
+  default: all
+  disable:
+    - depguard
+    - gochecknoglobals
+    - exhaustruct
+    - err113
+    - gochecknoinits
+    - ireturn
+    - forbidigo
+    - mnd
+    - varnamelen
+    - godoclint
+    - noctx
+    - noinlineerr
+    - nestif
+    - gosec
+    - funlen
+    - cyclop
+    - gocritic
+    - revive
+    - wrapcheck
+    - wsl
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+formatters:
+  enable:
+    - gci
+    - gofmt
+    - gofumpt
+    - goimports
+  exclusions:
+    generated: lax
