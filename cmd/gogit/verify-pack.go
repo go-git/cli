@@ -109,48 +109,9 @@ func verifyPack(path string, verbose bool) error {
 		return fmt.Errorf("failed to get entries: %w", err)
 	}
 
-	var objects []objectInfo
-
-	for {
-		entry, err := entries.Next()
-		if errors.Is(err, io.EOF) {
-			break
-		}
-
-		if err != nil {
-			return fmt.Errorf("failed to read entry: %w", err)
-		}
-
-		// Read raw object header to get delta information.
-		err = scanner.SeekFromStart(int64(entry.Offset))
-		if err != nil {
-			return fmt.Errorf("failed to seek to offset %d: %w", entry.Offset, err)
-		}
-
-		if !scanner.Scan() {
-			return fmt.Errorf("failed to scan object at offset %d", entry.Offset)
-		}
-
-		header, ok := scanner.Data().Value().(packfile.ObjectHeader)
-		if !ok {
-			return errors.New("failed to scan pack header")
-		}
-
-		// For delta objects, Size is the delta size.
-		// For regular objects, Size is the inflated size.
-		info := objectInfo{
-			hash:     entry.Hash,
-			diskType: header.Type,
-			size:     header.Size,
-			offset:   int64(entry.Offset),
-		}
-
-		// Calculate packed size (distance to next header or end of file).
-		if len(objects) > 0 {
-			objects[len(objects)-1].packedSize = info.offset - objects[len(objects)-1].offset
-		}
-
-		objects = append(objects, info)
+	objects, err := collectObjectInfo(entries, scanner)
+	if err != nil {
+		return err
 	}
 
 	// Calculate the packed size of the last object.
@@ -173,7 +134,126 @@ func verifyPack(path string, verbose bool) error {
 		objects[i].typ = obj.Type()
 	}
 
-	// Build delta chain information.
+	deltaChains, err := calculateDeltaChains(objects, scanner)
+	if err != nil {
+		return err
+	}
+
+	if verbose {
+		printPackStatistics(objects, deltaChains)
+	}
+
+	fmt.Printf("%s: ok\n", path)
+
+	return nil
+}
+
+func openPack(path string) (billy.File, billy.File, error) {
+	if verifyPackFixtureUrl || verifyPackFixtureTag {
+		var f fixtures.Fixtures
+		if verifyPackFixtureUrl {
+			f = fixtures.ByURL(path)
+		}
+
+		if verifyPackFixtureTag {
+			f = fixtures.ByTag(path)
+		}
+
+		if len(f) == 0 {
+			return nil, nil, fmt.Errorf("no fixture found for %q", path)
+		}
+
+		fixture := f.One()
+
+		return fixture.Idx(), fixture.Packfile(), nil
+	}
+
+	idxPath := path
+	packPath := path
+
+	if before, ok := strings.CutSuffix(path, ".idx"); ok {
+		packPath = before + ".pack"
+	} else if before, ok := strings.CutSuffix(path, ".pack"); ok {
+		idxPath = before + ".idx"
+	} else {
+		return nil, nil, errors.New("file must have .idx or .pack extension")
+	}
+
+	idxFile, err := os.Open(idxPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to open index file: %w", err)
+	}
+
+	packFile, err := os.Open(packPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to open pack file: %w", err)
+	}
+
+	return idxFile, packFile, nil
+}
+
+// printPackStatistics outputs detailed object information and delta chain
+// statistics to stdout.
+func printPackStatistics(objects []objectInfo, deltaChains map[plumbing.Hash]int) {
+	for _, obj := range objects {
+		// Format type with padding to match git's output.
+		typeStr := obj.typ.String()
+		if len(typeStr) == 4 {
+			typeStr = typeStr + "   "
+		} else {
+			typeStr = typeStr + " "
+		}
+
+		fmt.Printf("%s %s%d %d %d",
+			obj.hash.String(),
+			typeStr,
+			obj.size,
+			obj.packedSize,
+			obj.offset,
+		)
+
+		if obj.diskType.IsDelta() && !obj.base.IsZero() {
+			fmt.Printf(" %d %s", obj.depth, obj.base.String())
+		}
+
+		fmt.Println()
+	}
+
+	// Print statistics.
+	nonDelta := len(objects) - len(deltaChains)
+	fmt.Printf("non delta: %d objects\n", nonDelta)
+
+	// Count chain lengths.
+	chainLengths := make(map[int]int)
+	for _, depth := range deltaChains {
+		chainLengths[depth]++
+	}
+
+	// Sort chain lengths for consistent output.
+	lengths := make([]int, 0, len(chainLengths))
+	for length := range chainLengths {
+		lengths = append(lengths, length)
+	}
+
+	sort.Ints(lengths)
+
+	for _, length := range lengths {
+		count := chainLengths[length]
+
+		objWord := "objects"
+		if count == 1 {
+			objWord = "object"
+		}
+
+		fmt.Printf("chain length = %d: %d %s\n", length, count, objWord)
+	}
+}
+
+// calculateDeltaChains computes delta chain depth and base object references
+// for all delta objects in the pack file.
+//
+//nolint:gocognit
+func calculateDeltaChains(objects []objectInfo, scanner *packfile.Scanner) (map[plumbing.Hash]int, error) {
 	deltaChains := make(map[plumbing.Hash]int)
 	objectByHash := make(map[plumbing.Hash]*objectInfo)
 	objectByOffset := make(map[int64]*objectInfo)
@@ -191,16 +271,16 @@ func verifyPack(path string, verbose bool) error {
 
 		err := scanner.SeekFromStart(objects[i].offset)
 		if err != nil {
-			return fmt.Errorf("failed to seek to offset %d: %w", objects[i].offset, err)
+			return nil, fmt.Errorf("failed to seek to offset %d: %w", objects[i].offset, err)
 		}
 
 		if !scanner.Scan() {
-			return fmt.Errorf("failed to scan object at offset %d", objects[i].offset)
+			return nil, fmt.Errorf("failed to scan object at offset %d", objects[i].offset)
 		}
 
 		header, ok := scanner.Data().Value().(packfile.ObjectHeader)
 		if !ok {
-			return errors.New("failed to scan pack header")
+			return nil, errors.New("failed to scan pack header")
 		}
 
 		// Calculate delta chain depth.
@@ -270,106 +350,55 @@ func verifyPack(path string, verbose bool) error {
 		deltaChains[objects[i].hash] = depth
 	}
 
-	if verbose {
-		for _, obj := range objects {
-			// Format type with padding to match git's output.
-			typeStr := obj.typ.String()
-			if len(typeStr) == 4 {
-				typeStr = typeStr + "   "
-			} else {
-				typeStr = typeStr + " "
-			}
-
-			fmt.Printf("%s %s%d %d %d",
-				obj.hash.String(),
-				typeStr,
-				obj.size,
-				obj.packedSize,
-				obj.offset,
-			)
-
-			if obj.diskType.IsDelta() && !obj.base.IsZero() {
-				fmt.Printf(" %d %s", obj.depth, obj.base.String())
-			}
-
-			fmt.Println()
-		}
-
-		// Print statistics.
-		nonDelta := len(objects) - len(deltaChains)
-		fmt.Printf("non delta: %d objects\n", nonDelta)
-
-		// Count chain lengths.
-		chainLengths := make(map[int]int)
-		for _, depth := range deltaChains {
-			chainLengths[depth]++
-		}
-
-		// Sort chain lengths for consistent output.
-		var lengths []int
-		for length := range chainLengths {
-			lengths = append(lengths, length)
-		}
-
-		sort.Ints(lengths)
-
-		for _, length := range lengths {
-			count := chainLengths[length]
-
-			objWord := "objects"
-			if count == 1 {
-				objWord = "object"
-			}
-
-			fmt.Printf("chain length = %d: %d %s\n", length, count, objWord)
-		}
-	}
-
-	fmt.Printf("%s: ok\n", path)
-
-	return nil
+	return deltaChains, nil
 }
 
-func openPack(path string) (billy.File, billy.File, error) {
-	if verifyPackFixtureUrl || verifyPackFixtureTag {
-		var f fixtures.Fixtures
-		if verifyPackFixtureUrl {
-			f = fixtures.ByURL(path)
+// collectObjectInfo reads all objects from the pack file and builds a list
+// of object metadata including offsets and packed sizes.
+func collectObjectInfo(entries idxfile.EntryIter, scanner *packfile.Scanner) ([]objectInfo, error) {
+	var objects []objectInfo
+
+	for {
+		entry, err := entries.Next()
+		if errors.Is(err, io.EOF) {
+			break
 		}
 
-		if verifyPackFixtureTag {
-			f = fixtures.ByTag(path)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read entry: %w", err)
 		}
 
-		if len(f) == 0 {
-			return nil, nil, fmt.Errorf("no fixture found for %q", path)
+		// Read raw object header to get delta information.
+		err = scanner.SeekFromStart(int64(entry.Offset))
+		if err != nil {
+			return nil, fmt.Errorf("failed to seek to offset %d: %w", entry.Offset, err)
 		}
 
-		fixture := f.One()
+		if !scanner.Scan() {
+			return nil, fmt.Errorf("failed to scan object at offset %d", entry.Offset)
+		}
 
-		return fixture.Idx(), fixture.Packfile(), nil
+		header, ok := scanner.Data().Value().(packfile.ObjectHeader)
+		if !ok {
+			return nil, errors.New("failed to scan pack header")
+		}
+
+		// For delta objects, Size is the delta size.
+		// For regular objects, Size is the inflated size.
+		info := objectInfo{
+			hash:     entry.Hash,
+			diskType: header.Type,
+			size:     header.Size,
+			offset:   int64(entry.Offset),
+		}
+
+		// Calculate packed size (distance to next header or end of file).
+		if len(objects) > 0 {
+			objects[len(objects)-1].packedSize = info.offset - objects[len(objects)-1].offset
+		}
+
+		objects = append(objects, info)
 	}
 
-	idxPath := path
-	packPath := path
-
-	if before, ok := strings.CutSuffix(path, ".idx"); ok {
-		packPath = before + ".pack"
-	} else if before, ok := strings.CutSuffix(path, ".pack"); ok {
-		idxPath = before + ".idx"
-	} else {
-		return nil, nil, errors.New("file must have .idx or .pack extension")
-	}
-
-	idxFile, err := os.Open(idxPath)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to open index file: %w", err)
-	}
-
-	packFile, err := os.Open(packPath)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to open pack file: %w", err)
-	}
-
-	return idxFile, packFile, nil
+	return objects, nil
 }
