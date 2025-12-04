@@ -1,5 +1,5 @@
 # renovate: datasource=github-tags depName=golangci/golangci-lint
-GOLANGCI_VERSION ?= v2.6.2
+GOLANGCI_VERSION ?= v2.7.0
 TOOLS_BIN := $(shell mkdir -p build/tools && realpath build/tools)
 
 GOLANGCI = $(TOOLS_BIN)/golangci-lint-$(GOLANGCI_VERSION)
