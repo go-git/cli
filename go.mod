@@ -8,7 +8,7 @@ require (
 	github.com/go-git/go-billy/v6 v6.0.0-20251126203821-7f9c95185ee0
 	github.com/go-git/go-git-fixtures/v5 v5.1.1
 	github.com/go-git/go-git/v6 v6.0.0-20251123162143-36fa81975a20
-	github.com/spf13/cobra v1.10.1
+	github.com/spf13/cobra v1.10.2
 	golang.org/x/crypto v0.46.0
 	golang.org/x/term v0.38.0
 )
