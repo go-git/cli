@@ -6,8 +6,8 @@ toolchain go1.25.4
 
 require (
 	github.com/go-git/go-billy/v6 v6.0.0-20251217170237-e9738f50a3cd
-	github.com/go-git/go-git-fixtures/v5 v5.1.1
-	github.com/go-git/go-git/v6 v6.0.0-20251123162143-36fa81975a20
+	github.com/go-git/go-git-fixtures/v5 v5.1.2-0.20251217024734-e267099c9ed5
+	github.com/go-git/go-git/v6 v6.0.0-20251218224324-ede584db67a4
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/crypto v0.46.0
 	golang.org/x/term v0.38.0
@@ -27,6 +27,6 @@ require (
 	github.com/pjbgf/sha1cd v0.5.0 // indirect
 	github.com/sergi/go-diff v1.4.0 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
-	golang.org/x/net v0.47.0 // indirect
+	golang.org/x/net v0.48.0 // indirect
 	golang.org/x/sys v0.39.0 // indirect
 )
