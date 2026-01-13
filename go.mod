@@ -9,8 +9,8 @@ require (
 	github.com/go-git/go-git-fixtures/v5 v5.1.2-0.20251217024734-e267099c9ed5
 	github.com/go-git/go-git/v6 v6.0.0-20251218224324-ede584db67a4
 	github.com/spf13/cobra v1.10.2
-	golang.org/x/crypto v0.46.0
-	golang.org/x/term v0.38.0
+	golang.org/x/crypto v0.47.0
+	golang.org/x/term v0.39.0
 )
 
 require (
@@ -28,5 +28,5 @@ require (
 	github.com/sergi/go-diff v1.4.0 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
 	golang.org/x/net v0.48.0 // indirect
-	golang.org/x/sys v0.39.0 // indirect
+	golang.org/x/sys v0.40.0 // indirect
 )
