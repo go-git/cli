@@ -165,7 +165,17 @@ func openPack(path string) (billy.File, billy.File, error) {
 
 		fixture := f.One()
 
-		return fixture.Idx(), fixture.Packfile(), nil
+		idxFile, err := fixture.Idx()
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to open fixture index: %w", err)
+		}
+
+		packFile, err := fixture.Packfile()
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to open fixture packfile: %w", err)
+		}
+
+		return idxFile, packFile, nil
 	}
 
 	idxPath := path
