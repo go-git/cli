@@ -30,18 +30,22 @@ var rootCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		directory := args[0]
 		addr := fmt.Sprintf(":%d", port)
+
 		abs, err := filepath.Abs(directory)
 		if err != nil {
 			return fmt.Errorf("failed to get absolute path: %w", err)
 		}
 
 		log.Printf("Using absolute path: %q", abs)
+
 		logger := log.Default()
 		loader := transport.NewFilesystemLoader(osfs.New(abs, osfs.WithBoundOS()), false)
 		gitmw := githttp.NewBackend(loader)
 
 		handler := LoggingMiddleware(logger, gitmw)
+
 		log.Printf("Starting server on %q for directory %q", addr, directory)
+
 		if err := http.ListenAndServe(addr, handler); !errors.Is(err, http.ErrServerClosed) {
 			return err
 		}

@@ -62,6 +62,7 @@ var worktreeAddCmd = &cobra.Command{
 		if worktreeAddDetach {
 			opts = append(opts, worktree.WithDetachedHead())
 		}
+
 		if worktreeAddCommit != "" {
 			hash := plumbing.NewHash(worktreeAddCommit)
 			if !hash.IsZero() {
@@ -121,6 +122,7 @@ var worktreeListCmd = &cobra.Command{
 		commonDir := wts.Filesystem()
 		for _, name := range worktrees {
 			gitdirPath := filepath.Join(commonDir.Root(), "worktrees", name, "gitdir")
+
 			gitdirData, err := os.ReadFile(gitdirPath)
 			if err != nil || len(gitdirData) == 0 {
 				continue
@@ -128,6 +130,7 @@ var worktreeListCmd = &cobra.Command{
 
 			wtPath := filepath.Dir(string(gitdirData[:len(gitdirData)-1]))
 			wt := memfs.New()
+
 			err = w.Init(wt, name)
 			if err != nil {
 				continue
