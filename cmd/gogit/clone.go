@@ -56,6 +56,7 @@ var cloneCmd = &cobra.Command{
 		if cloneTags {
 			opts.Tags = git.TagFollowing
 		}
+
 		if cloneProgress {
 			opts.Progress = cmd.OutOrStdout()
 		}

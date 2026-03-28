@@ -35,8 +35,10 @@ var uploadPackCmd = &cobra.Command{
 		}
 
 		ctx := cmd.Context()
+
 		if uploadPackTimeout > 0 {
 			var cancel context.CancelFunc
+
 			ctx, cancel = context.WithTimeout(ctx, time.Duration(uploadPackTimeout)*time.Second)
 			defer cancel()
 		}

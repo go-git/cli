@@ -44,9 +44,12 @@ var pushCmd = &cobra.Command{
 		}
 
 		var ep *transport.Endpoint
+
 		remoteName := git.DefaultRemoteName
+
 		if len(args) > 0 {
 			isRemote := false
+
 			for remote := range cfg.Remotes {
 				if args[0] == remote {
 					remoteName = remote
@@ -55,6 +58,7 @@ var pushCmd = &cobra.Command{
 					break
 				}
 			}
+
 			if !isRemote {
 				// Is this a repository URL?
 				ep, err = transport.NewEndpoint(args[0])
@@ -66,6 +70,7 @@ var pushCmd = &cobra.Command{
 		}
 
 		var refspecs []config.RefSpec
+
 		if len(args) > 1 {
 			for _, arg := range args[1:] {
 				ref := plumbing.NewBranchReferenceName(arg)
@@ -101,6 +106,7 @@ var pushCmd = &cobra.Command{
 		}
 
 		var isatty bool
+
 		stderr := cmd.ErrOrStderr()
 		if f, ok := stderr.(interface {
 			Fd() uintptr
