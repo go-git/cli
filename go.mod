@@ -1,6 +1,6 @@
 module github.com/go-git/cli
 
-go 1.24.0
+go 1.25.0
 
 toolchain go1.25.4
 
@@ -9,8 +9,8 @@ require (
 	github.com/go-git/go-git-fixtures/v5 v5.1.2-0.20260207212403-7b71b9a390be
 	github.com/go-git/go-git/v6 v6.0.0-20260114124804-a8db3a6585a6
 	github.com/spf13/cobra v1.10.2
-	golang.org/x/crypto v0.48.0
-	golang.org/x/term v0.40.0
+	golang.org/x/crypto v0.49.0
+	golang.org/x/term v0.41.0
 )
 
 require (
@@ -27,6 +27,6 @@ require (
 	github.com/pjbgf/sha1cd v0.5.0 // indirect
 	github.com/sergi/go-diff v1.4.0 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
-	golang.org/x/net v0.49.0 // indirect
-	golang.org/x/sys v0.41.0 // indirect
+	golang.org/x/net v0.51.0 // indirect
+	golang.org/x/sys v0.42.0 // indirect
 )
