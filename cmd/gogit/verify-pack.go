@@ -15,6 +15,7 @@ import (
 	"github.com/go-git/go-git/v6/plumbing"
 	"github.com/go-git/go-git/v6/plumbing/format/idxfile"
 	"github.com/go-git/go-git/v6/plumbing/format/packfile"
+	"github.com/go-git/go-git/v6/plumbing/hash"
 	"github.com/spf13/cobra"
 )
 
@@ -81,7 +82,7 @@ func verifyPack(path string, verbose bool) error {
 
 	idx := idxfile.NewMemoryIndex(ch.Size())
 
-	dec := idxfile.NewDecoder(idxFile)
+	dec := idxfile.NewDecoder(idxFile, hash.New(ch))
 	if err := dec.Decode(idx); err != nil {
 		return fmt.Errorf("failed to decode index file: %w", err)
 	}
