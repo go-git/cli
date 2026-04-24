@@ -3,9 +3,11 @@ package main
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 
+	"github.com/go-git/go-git/v6/plumbing/client"
 	"github.com/go-git/go-git/v6/plumbing/transport"
 	"github.com/go-git/go-git/v6/plumbing/transport/ssh"
 	"github.com/go-git/go-git/v6/utils/trace"
@@ -58,27 +60,31 @@ func main() {
 	}
 }
 
-func defaultAuth(ep *transport.Endpoint) transport.AuthMethod {
-	switch ep.Scheme {
+func defaultClientOptions(u *url.URL) []client.Option {
+	if u == nil {
+		return nil
+	}
+
+	switch u.Scheme {
 	case "file", "git":
 		// Do nothing.
 	case "ssh":
-		if ep.User == nil {
+		if u.User == nil {
 			return nil
 		}
 
-		a, err := ssh.NewSSHAgentAuth(ep.User.Username())
+		a, err := ssh.NewSSHAgentAuth(u.User.Username())
 		if err != nil {
 			return nil
 		}
 
-		switch ep.Host {
+		switch u.Host {
 		case "localhost", "127.0.0.1":
 			// Ignore host key verification for localhost.
 			a.HostKeyCallback = gossh.InsecureIgnoreHostKey()
 		}
 
-		return a
+		return []client.Option{client.WithSSHAuth(a)}
 	case "http", "https":
 	}
 

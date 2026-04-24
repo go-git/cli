@@ -48,7 +48,7 @@ var uploadPackCmd = &cobra.Command{
 			r.Storer,
 			os.Stdin,
 			os.Stdout,
-			&transport.UploadPackOptions{
+			&transport.UploadPackRequest{
 				GitProtocol:   os.Getenv("GIT_PROTOCOL"),
 				StatelessRPC:  uploadPackStatelessRPC,
 				AdvertiseRefs: uploadPackAdvertiseRefs,

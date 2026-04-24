@@ -2,11 +2,11 @@ package main
 
 import (
 	"fmt"
+	"net/url"
 	"path"
 	"strings"
 
 	"github.com/go-git/go-git/v6"
-	"github.com/go-git/go-git/v6/plumbing/transport"
 	"github.com/spf13/cobra"
 )
 
@@ -41,16 +41,16 @@ var cloneCmd = &cobra.Command{
 			}
 		}
 
-		ep, err := transport.NewEndpoint(args[0])
+		ep, err := url.Parse(args[0])
 		if err != nil {
 			return err
 		}
 
 		opts := git.CloneOptions{
-			URL:   args[0],
-			Depth: cloneDepth,
-			Auth:  defaultAuth(ep),
-			Bare:  cloneBare,
+			URL:           args[0],
+			Depth:         cloneDepth,
+			ClientOptions: defaultClientOptions(ep),
+			Bare:          cloneBare,
 		}
 
 		if cloneTags {

@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/go-git/go-billy/v6/osfs"
-	githttp "github.com/go-git/go-git/v6/backend/http"
+	"github.com/go-git/go-git/v6/backend"
 	"github.com/go-git/go-git/v6/plumbing/transport"
 	"github.com/spf13/cobra"
 )
@@ -40,7 +40,7 @@ var rootCmd = &cobra.Command{
 
 		logger := log.Default()
 		loader := transport.NewFilesystemLoader(osfs.New(abs, osfs.WithBoundOS()), false)
-		gitmw := githttp.NewBackend(loader)
+		gitmw := backend.New(loader)
 
 		handler := LoggingMiddleware(logger, gitmw)
 

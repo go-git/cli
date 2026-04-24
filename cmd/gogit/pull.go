@@ -2,9 +2,9 @@ package main
 
 import (
 	"errors"
+	"net/url"
 
 	"github.com/go-git/go-git/v6"
-	"github.com/go-git/go-git/v6/plumbing/transport"
 	"github.com/spf13/cobra"
 )
 
@@ -34,13 +34,13 @@ var pullCmd = &cobra.Command{
 			return err
 		}
 
-		ep, err := transport.NewEndpoint(cfg.Remotes["origin"].URLs[0])
+		ep, err := url.Parse(cfg.Remotes["origin"].URLs[0])
 		if err != nil {
 			return err
 		}
 
 		opts := git.PullOptions{
-			Auth: defaultAuth(ep),
+			ClientOptions: defaultClientOptions(ep),
 		}
 		if pullProgress {
 			opts.Progress = cmd.OutOrStdout()

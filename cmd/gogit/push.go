@@ -3,11 +3,11 @@ package main
 import (
 	"errors"
 	"fmt"
+	"net/url"
 
 	"github.com/go-git/go-git/v6"
 	"github.com/go-git/go-git/v6/config"
 	"github.com/go-git/go-git/v6/plumbing"
-	"github.com/go-git/go-git/v6/plumbing/transport"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -43,7 +43,7 @@ var pushCmd = &cobra.Command{
 			return fmt.Errorf("failed to get repository config: %w", err)
 		}
 
-		var ep *transport.Endpoint
+		var ep *url.URL
 
 		remoteName := git.DefaultRemoteName
 
@@ -61,7 +61,7 @@ var pushCmd = &cobra.Command{
 
 			if !isRemote {
 				// Is this a repository URL?
-				ep, err = transport.NewEndpoint(args[0])
+				ep, err = url.Parse(args[0])
 				if err != nil {
 					// We have a remote name
 					remoteName = args[0]
@@ -91,18 +91,18 @@ var pushCmd = &cobra.Command{
 				return errors.New("no remote URLs")
 			}
 
-			ep, err = transport.NewEndpoint(remote.Config().URLs[urln])
+			ep, err = url.Parse(remote.Config().URLs[urln])
 			if err != nil {
 				return err
 			}
 		}
 
 		opts := git.PushOptions{
-			Auth:       defaultAuth(ep),
-			RemoteName: remoteName,
-			RefSpecs:   refspecs,
-			Prune:      pushPrune,
-			Force:      pushForce,
+			ClientOptions: defaultClientOptions(ep),
+			RemoteName:    remoteName,
+			RefSpecs:      refspecs,
+			Prune:         pushPrune,
+			Force:         pushForce,
 		}
 
 		var isatty bool

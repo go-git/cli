@@ -3,9 +3,9 @@ package main
 import (
 	"errors"
 	"math"
+	"net/url"
 
 	"github.com/go-git/go-git/v6"
-	"github.com/go-git/go-git/v6/plumbing/transport"
 	"github.com/spf13/cobra"
 )
 
@@ -38,7 +38,7 @@ var fetchCmd = &cobra.Command{
 			return err
 		}
 
-		ep, err := transport.NewEndpoint(remote.Config().URLs[0])
+		ep, err := url.Parse(remote.Config().URLs[0])
 		if err != nil {
 			return err
 		}
@@ -48,8 +48,8 @@ var fetchCmd = &cobra.Command{
 		}
 
 		opts := git.FetchOptions{
-			Depth: fetchDepth,
-			Auth:  defaultAuth(ep),
+			Depth:         fetchDepth,
+			ClientOptions: defaultClientOptions(ep),
 		}
 
 		if fetchProgress {
