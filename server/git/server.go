@@ -28,10 +28,27 @@ var ErrServerClosed = errors.New("server closed")
 // DefaultBackend is the default global Git transport server handler.
 var DefaultBackend Handler = NewBackend(nil)
 
+// ServerContextKey is the context key used to store the server in the context.
+var ServerContextKey = &contextKey{"git-server"}
+
+// Handler is the interface that handles TCP requests for the Git protocol.
+type Handler interface {
+	// ServeTCP handles a TCP connection for the Git protocol.
+	ServeTCP(ctx context.Context, c io.ReadWriteCloser, req *packp.GitProtoRequest)
+}
+
 // NewBackend creates a [Handler] backed by the given [transport.Loader].
 // If loader is nil, [transport.DefaultLoader] is used.
 func NewBackend(loader transport.Loader) Handler {
 	return &backendHandler{b: backend.New(loader)}
+}
+
+// HandlerFunc is a function that implements the Handler interface.
+type HandlerFunc func(ctx context.Context, c io.ReadWriteCloser, req *packp.GitProtoRequest)
+
+// ServeTCP implements the Handler interface.
+func (f HandlerFunc) ServeTCP(ctx context.Context, c io.ReadWriteCloser, req *packp.GitProtoRequest) {
+	f(ctx, c, req)
 }
 
 // backendHandler wraps a [backend.Backend] to implement the [Handler] interface.
@@ -45,23 +62,6 @@ func (bh *backendHandler) ServeTCP(ctx context.Context, c io.ReadWriteCloser, re
 		// Best-effort error notification; ignore if the write itself fails.
 		_ = renderError(c, fmt.Errorf("error serving request: %w", err))
 	}
-}
-
-// ServerContextKey is the context key used to store the server in the context.
-var ServerContextKey = &contextKey{"git-server"}
-
-// Handler is the interface that handles TCP requests for the Git protocol.
-type Handler interface {
-	// ServeTCP handles a TCP connection for the Git protocol.
-	ServeTCP(ctx context.Context, c io.ReadWriteCloser, req *packp.GitProtoRequest)
-}
-
-// HandlerFunc is a function that implements the Handler interface.
-type HandlerFunc func(ctx context.Context, c io.ReadWriteCloser, req *packp.GitProtoRequest)
-
-// ServeTCP implements the Handler interface.
-func (f HandlerFunc) ServeTCP(ctx context.Context, c io.ReadWriteCloser, req *packp.GitProtoRequest) {
-	f(ctx, c, req)
 }
 
 // Server is a TCP server that handles Git protocol requests.
