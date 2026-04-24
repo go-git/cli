@@ -3,13 +3,13 @@ package main
 import (
 	"log"
 	"net"
+	"net/url"
 	"path/filepath"
 	"strconv"
 
 	gitserver "github.com/go-git/cli/server/git"
 	"github.com/go-git/go-billy/v6"
 	"github.com/go-git/go-billy/v6/osfs"
-	gitbackend "github.com/go-git/go-git/v6/backend/git"
 	"github.com/go-git/go-git/v6/plumbing/transport"
 	"github.com/go-git/go-git/v6/storage"
 	"github.com/spf13/cobra"
@@ -40,7 +40,7 @@ var daemonCmd = &cobra.Command{
 
 		loader := NewDirsLoader(dirs, false, daemonExportAll)
 		addr := net.JoinHostPort(daemonListen, strconv.Itoa(daemonPort))
-		be := gitbackend.NewBackend(loader)
+		be := gitserver.NewBackend(loader)
 		srv := &gitserver.Server{
 			Addr:     addr,
 			Handler:  gitserver.LoggingMiddleware(log.Default(), be),
@@ -81,16 +81,16 @@ func NewDirsLoader(dirs []string, strict, exportAll bool) *dirsLoader {
 }
 
 // Load implements transport.Loader.
-func (d *dirsLoader) Load(ep *transport.Endpoint) (storage.Storer, error) {
+func (d *dirsLoader) Load(u *url.URL) (storage.Storer, error) {
 	for i, loader := range d.loaders {
-		storer, err := loader.Load(ep)
+		storer, err := loader.Load(u)
 		if err == nil {
 			if !d.exportAll {
 				// We need to check if git-daemon-export-ok
 				// file exists and if it does not, we skip this
 				// repository.
 				dfs := d.fss[i]
-				okFile := filepath.Join(ep.Path, "git-daemon-export-ok")
+				okFile := filepath.Join(u.Path, "git-daemon-export-ok")
 
 				stat, err := dfs.Lstat(okFile)
 				if err != nil || (stat != nil && !stat.Mode().IsRegular()) {

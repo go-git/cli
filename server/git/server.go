@@ -12,7 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	gitbackend "github.com/go-git/go-git/v6/backend/git"
+	"github.com/go-git/go-git/v6/backend"
 	"github.com/go-git/go-git/v6/plumbing/format/pktline"
 	"github.com/go-git/go-git/v6/plumbing/protocol/packp"
 	"github.com/go-git/go-git/v6/plumbing/transport"
@@ -26,7 +26,7 @@ const DefaultAddr = ":9418"
 var ErrServerClosed = errors.New("server closed")
 
 // DefaultBackend is the default global Git transport server handler.
-var DefaultBackend = gitbackend.NewBackend(nil)
+var DefaultBackend Handler = NewBackend(nil)
 
 // ServerContextKey is the context key used to store the server in the context.
 var ServerContextKey = &contextKey{"git-server"}
@@ -37,12 +37,31 @@ type Handler interface {
 	ServeTCP(ctx context.Context, c io.ReadWriteCloser, req *packp.GitProtoRequest)
 }
 
+// NewBackend creates a [Handler] backed by the given [transport.Loader].
+// If loader is nil, [transport.DefaultLoader] is used.
+func NewBackend(loader transport.Loader) Handler {
+	return &backendHandler{b: backend.New(loader)}
+}
+
 // HandlerFunc is a function that implements the Handler interface.
 type HandlerFunc func(ctx context.Context, c io.ReadWriteCloser, req *packp.GitProtoRequest)
 
 // ServeTCP implements the Handler interface.
 func (f HandlerFunc) ServeTCP(ctx context.Context, c io.ReadWriteCloser, req *packp.GitProtoRequest) {
 	f(ctx, c, req)
+}
+
+// backendHandler wraps a [backend.Backend] to implement the [Handler] interface.
+type backendHandler struct {
+	b *backend.Backend
+}
+
+func (bh *backendHandler) ServeTCP(ctx context.Context, c io.ReadWriteCloser, req *packp.GitProtoRequest) {
+	backendReq := backend.RequestFromProto(req)
+	if err := bh.b.Serve(ctx, c, c, backendReq); err != nil {
+		// Best-effort error notification; ignore if the write itself fails.
+		_ = renderError(c, fmt.Errorf("error serving request: %w", err))
+	}
 }
 
 // Server is a TCP server that handles Git protocol requests.

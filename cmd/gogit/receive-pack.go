@@ -35,7 +35,7 @@ var receivePackCmd = &cobra.Command{
 			r.Storer,
 			os.Stdin,
 			os.Stdout,
-			&transport.ReceivePackOptions{
+			&transport.ReceivePackRequest{
 				GitProtocol:   os.Getenv("GIT_PROTOCOL"),
 				StatelessRPC:  receivePackStatelessRPC,
 				AdvertiseRefs: receivePackAdvertiseRefs,
