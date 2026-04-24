@@ -42,9 +42,8 @@ type backendHandler struct {
 func (bh *backendHandler) ServeTCP(ctx context.Context, c io.ReadWriteCloser, req *packp.GitProtoRequest) {
 	backendReq := backend.RequestFromProto(req)
 	if err := bh.b.Serve(ctx, c, c, backendReq); err != nil {
-		if rErr := renderError(c, fmt.Errorf("error serving request: %w", err)); rErr != nil {
-			_ = rErr
-		}
+		// Best-effort error notification; ignore if the write itself fails.
+		_ = renderError(c, fmt.Errorf("error serving request: %w", err))
 	}
 }
 
