@@ -24,3 +24,7 @@ ifneq ($(shell git status --porcelain --untracked-files=no),)
 	@git --no-pager diff
 	@exit 1
 endif
+
+.PHONY: conformance
+conformance:
+	./conformance/run.sh

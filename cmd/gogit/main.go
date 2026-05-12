@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/go-git/go-git/v6/plumbing/client"
 	"github.com/go-git/go-git/v6/plumbing/transport"
@@ -16,10 +18,16 @@ import (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "gogit [<args>] <command>",
-	Short: "gogit is a Git CLI that uses go-git as its backend.",
+	Use:     "gogit [<args>] <command>",
+	Short:   "gogit is a Git CLI that uses go-git as its backend.",
+	Version: "0.1.0-gogit",
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		return cmd.Usage()
+		_ = cmd.Usage()
+		// Real git exits 1 when invoked with no subcommand.
+		// test-lib.sh relies on this to detect a working git binary.
+		os.Exit(1)
+
+		return nil
 	},
 	DisableFlagsInUseLine: true,
 }
@@ -47,6 +55,20 @@ func init() {
 }
 
 func main() {
+	for _, arg := range os.Args[1:] {
+		if arg == "--exec-path" || strings.HasPrefix(arg, "--exec-path=") {
+			exe, err := os.Executable()
+			if err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+
+			fmt.Println(filepath.Dir(exe))
+
+			return
+		}
+	}
+
 	err := rootCmd.Execute()
 	if err != nil {
 		var rerr *transport.RemoteError
