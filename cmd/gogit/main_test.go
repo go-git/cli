@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -51,6 +52,22 @@ func runGogitEnv(t *testing.T, dir string, env []string, args ...string) (string
 	cmd.Dir = dir
 
 	cmd.Env = append(os.Environ(), env...)
+
+	var stdout, stderr bytes.Buffer
+
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+
+	return stdout.String(), stderr.String(), err
+}
+
+func runGogitStdin(t *testing.T, dir string, stdin string, args ...string) (string, string, error) {
+	t.Helper()
+
+	cmd := exec.Command(gogitBin, args...)
+	cmd.Dir = dir
+	cmd.Stdin = strings.NewReader(stdin)
 
 	var stdout, stderr bytes.Buffer
 
