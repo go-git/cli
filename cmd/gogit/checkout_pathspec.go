@@ -28,5 +28,7 @@ func resolvePathspec(worktreeRoot, cwd, spec string) (string, error) {
 		return "", fmt.Errorf("pathspec %q is outside worktree %q", spec, worktreeRoot)
 	}
 
-	return rel, nil
+	// Tree paths in go-git always use forward slashes regardless of OS, so
+	// normalise Windows-style separators that filepath.Rel produces.
+	return filepath.ToSlash(rel), nil
 }

@@ -174,14 +174,14 @@ for test_script in "${TESTS_TO_RUN[@]}"; do
         selector_args=(--run="$SELECTOR")
     fi
     if [ "$INTERACTIVE" = 1 ]; then
-        if ( cd "$UPSTREAM_T" && sh "./$test_script" -v -i "${selector_args[@]}" ); then
+        if ( cd "$UPSTREAM_T" && sh "./$test_script" -v -i ${selector_args[@]+"${selector_args[@]}"} ); then
             :
         else
             EXIT_CODE=1
         fi
     else
         tap_file="$RESULTS_DIR/$test_script.tap"
-        if ( cd "$UPSTREAM_T" && sh "./$test_script" -v -i "${selector_args[@]}" ) | tee "$tap_file"; then
+        if ( cd "$UPSTREAM_T" && sh "./$test_script" -v -i ${selector_args[@]+"${selector_args[@]}"} ) | tee "$tap_file"; then
             :
         else
             EXIT_CODE=1

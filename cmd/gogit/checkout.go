@@ -34,6 +34,8 @@ var checkoutCmd = &cobra.Command{
 			return fmt.Errorf("failed to open repository: %w", err)
 		}
 
+		defer r.Close()
+
 		w, err := r.Worktree()
 		if err != nil {
 			return fmt.Errorf("failed to open worktree: %w", err)
