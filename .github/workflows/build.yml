@@ -58,6 +58,7 @@ jobs:
         shell: bash
         env:
           GO_GIT_REF: ${{ inputs.go_git_ref }}
+          CONFORMANCE_VERBOSE: "1"
         run: make conformance
       - name: Upload TAP results
         if: failure()

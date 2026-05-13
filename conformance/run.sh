@@ -23,7 +23,13 @@ echo "Building gogit..."
 ( cd "$REPO_ROOT" && go build -o "$BIN_DIR/gogit" ./cmd/gogit )
 ln -sf gogit "$BIN_DIR/git"
 
-# Resolve upstream tests source.
+# Resolve upstream tests source. The clone/fetch/reset commands below use the
+# HOST'S `git` binary, not gogit, by design:
+#   - gogit is not yet built at this point in the script.
+#   - We are cloning over HTTPS from github.com; this is test infrastructure,
+#     not part of what is being tested.
+#   - We want canonical Git semantics for the test sources themselves so any
+#     gogit divergence shows up in test results rather than in test setup.
 if [ -n "${GIT_SRC:-}" ] && [ -f "$GIT_SRC/t/test-lib.sh" ]; then
     UPSTREAM_T="$GIT_SRC/t"
     echo "Using GIT_SRC=$GIT_SRC"
@@ -162,6 +168,27 @@ INTERACTIVE=0
 if [ -t 1 ]; then
     INTERACTIVE=1
 fi
+
+# Verbose mode keeps upstream's full test output (the -v `expecting success...`
+# trace plus every `ok N - title` and per-test command output). Summary mode
+# (the default) keeps the same upstream invocation but filters stdout down to
+# harness headers, `not ok` lines, the per-script summary line, and the plan.
+# CI sets CONFORMANCE_VERBOSE=1 so its captured logs stay inspectable.
+VERBOSE=0
+case "${CONFORMANCE_VERBOSE:-}" in
+    1|true|TRUE|yes|YES) VERBOSE=1 ;;
+esac
+
+# summary_filter is the identity function in verbose mode and a `grep` keeping
+# only summary-worthy lines otherwise.
+summary_filter() {
+    if [ "$VERBOSE" = 1 ]; then
+        cat
+    else
+        grep -E '^(=== Running|not ok|# (passed|failed|fixed|still have|skip)|1\.\.[0-9]+)' || true
+    fi
+}
+
 for test_script in "${TESTS_TO_RUN[@]}"; do
     if [ ! -f "$UPSTREAM_T/$test_script" ]; then
         echo "Skipping missing test: $test_script" >&2
@@ -173,15 +200,18 @@ for test_script in "${TESTS_TO_RUN[@]}"; do
     if [ -n "$SELECTOR" ]; then
         selector_args=(--run="$SELECTOR")
     fi
+    # 2>&1 inside the subshell so the upstream `-v` trace, which goes to the
+    # test script's stderr, also reaches summary_filter; otherwise it would
+    # bypass the grep and leak straight to our stderr in summary mode.
     if [ "$INTERACTIVE" = 1 ]; then
-        if ( cd "$UPSTREAM_T" && sh "./$test_script" -v -i ${selector_args[@]+"${selector_args[@]}"} ); then
+        if ( cd "$UPSTREAM_T" && sh "./$test_script" -v -i ${selector_args[@]+"${selector_args[@]}"} 2>&1 ) | summary_filter; then
             :
         else
             EXIT_CODE=1
         fi
     else
         tap_file="$RESULTS_DIR/$test_script.tap"
-        if ( cd "$UPSTREAM_T" && sh "./$test_script" -v -i ${selector_args[@]+"${selector_args[@]}"} ) | tee "$tap_file"; then
+        if ( cd "$UPSTREAM_T" && sh "./$test_script" -v -i ${selector_args[@]+"${selector_args[@]}"} 2>&1 ) | tee "$tap_file" | summary_filter; then
             :
         else
             EXIT_CODE=1

@@ -21,15 +21,18 @@ var rootCmd = &cobra.Command{
 	Use:     "gogit [<args>] <command>",
 	Short:   "gogit is a Git CLI that uses go-git as its backend.",
 	Version: "0.1.0-gogit",
-	RunE: func(cmd *cobra.Command, _ []string) error {
-		_ = cmd.Usage()
-		// Real git exits 1 when invoked with no subcommand.
-		// test-lib.sh relies on this to detect a working git binary.
+	RunE: func(_ *cobra.Command, _ []string) error {
+		// Real git exits 1 when invoked with no subcommand. test-lib.sh
+		// relies on this to detect a working git binary. We deliberately
+		// omit printing usage so summary-mode harness output stays clean
+		// during test-lib's sanity checks.
 		os.Exit(1)
 
 		return nil
 	},
 	DisableFlagsInUseLine: true,
+	SilenceUsage:          true,
+	SilenceErrors:         true,
 }
 
 // envToTarget maps what environment variables can be used
