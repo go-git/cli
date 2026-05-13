@@ -1,0 +1,5 @@
+# Curated upstream tests run against gogit.
+# Add one filename per line. Lines starting with # are ignored.
+
+t2008-checkout-subdir.sh
+t5308-pack-detect-duplicates.sh

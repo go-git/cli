@@ -51,6 +51,8 @@ var worktreeAddCmd = &cobra.Command{
 			return fmt.Errorf("failed to open repository: %w", err)
 		}
 
+		defer r.Close()
+
 		w, err := worktree.New(r.Storer)
 		if err != nil {
 			return fmt.Errorf("failed to create worktree manager: %w", err)
@@ -91,6 +93,8 @@ var worktreeListCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("failed to open repository: %w", err)
 		}
+
+		defer r.Close()
 
 		w, err := worktree.New(r.Storer)
 		if err != nil {
@@ -174,6 +178,8 @@ var worktreeRemoveCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("failed to open repository: %w", err)
 		}
+
+		defer r.Close()
 
 		wt, err := worktree.New(r.Storer)
 		if err != nil {
