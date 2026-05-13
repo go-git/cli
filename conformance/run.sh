@@ -99,6 +99,7 @@ GIT_TEST_INSTALLED="$(cd "$BIN_DIR" && pwd)"
 GIT_BUILD_DIR="$(cd "$FAKE_BUILD_DIR" && pwd)"
 
 # Decide what to run.
+TESTS_SELECTORS=()
 if [ "$#" -ge 1 ]; then
     TEST_NAME="$1"
     SELECTOR="${2:-}"
@@ -108,12 +109,27 @@ elif [ -n "${TESTS:-}" ]; then
     SELECTOR=""
 else
     # Read curated list, ignoring blank lines and comments.
+    # Each non-comment line in tests.txt is either `<filename>` or
+    # `<filename> <selector>`. The selector is the same form upstream's
+    # --run= accepts (e.g. `1-5,7`, `!2`). It is forwarded to the test
+    # script so a single test can be graduated with a subset of its cases
+    # (used for t1600 which has a submodule case out of scope here).
     TESTS_TO_RUN=()
+    TESTS_SELECTORS=()
     while IFS= read -r line; do
         case "$line" in
             ''|\#*) continue ;;
         esac
-        TESTS_TO_RUN+=("$line")
+
+        name="${line%% *}"
+        sel=""
+        if [ "$name" != "$line" ]; then
+            sel="${line#"$name" }"
+            sel="${sel## }"
+        fi
+
+        TESTS_TO_RUN+=("$name")
+        TESTS_SELECTORS+=("$sel")
     done < "$REPO_ROOT/conformance/tests.txt"
     SELECTOR=""
 fi
@@ -153,16 +169,29 @@ summary_filter() {
     fi
 }
 
-for test_script in "${TESTS_TO_RUN[@]}"; do
+for i in "${!TESTS_TO_RUN[@]}"; do
+    test_script="${TESTS_TO_RUN[$i]}"
+
     if [ ! -f "$UPSTREAM_T/$test_script" ]; then
         echo "Skipping missing test: $test_script" >&2
         EXIT_CODE=1
         continue
     fi
+
     echo "=== Running $test_script ==="
-    selector_args=()
+
+    # CLI-provided SELECTOR (single-test invocation form) takes priority over
+    # any per-entry selector parsed from tests.txt.
+    per_test_sel=""
     if [ -n "$SELECTOR" ]; then
-        selector_args=(--run="$SELECTOR")
+        per_test_sel="$SELECTOR"
+    elif [ "$i" -lt "${#TESTS_SELECTORS[@]}" ]; then
+        per_test_sel="${TESTS_SELECTORS[$i]}"
+    fi
+
+    selector_args=()
+    if [ -n "$per_test_sel" ]; then
+        selector_args=(--run="$per_test_sel")
     fi
     # 2>&1 inside the subshell so the upstream `-v` trace, which goes to the
     # test script's stderr, also reaches summary_filter; otherwise it would

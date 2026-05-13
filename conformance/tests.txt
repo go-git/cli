@@ -4,12 +4,19 @@
 t2008-checkout-subdir.sh
 t5308-pack-detect-duplicates.sh
 t5325-reverse-index.sh
+t1600-index.sh 1-5,7
+t1601-index-bogus.sh
 #
 # Not yet graduated:
 #
+# - t1600-index.sh case 6: skipHash config + git submodule add + sub-repo
+#   fsck. Out of scope for the current plan (deferred until submodule
+#   support and index.skipHash both land).
+#
 # - t5302-pack-index.sh / t5313-pack-bounds-checks.sh: blocked on additional
-#   setup-side gogit subcommands (update-index, write-tree, commit-tree,
-#   ls-tree, update-ref).
+#   setup-side gogit surface (e.g. commit-tree, ls-tree, update-ref).
+#   write-tree, update-index --show-index-version, and mktree now exist, so
+#   the gap is narrower than before.
 #
 # - t5303-pack-corruption-resilience.sh: 14/36 cases pass. The premise of
 #   the failing cases is "corrupt a pack entry, then write a loose copy of

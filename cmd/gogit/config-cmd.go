@@ -11,10 +11,15 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var configUnsetAll bool
+var (
+	configUnsetAll bool
+	configAdd      bool
+)
 
 func init() {
 	configCmd.Flags().BoolVar(&configUnsetAll, "unset-all", false, "Remove all occurrences of the key")
+	configCmd.Flags().BoolVar(&configAdd, "add", false,
+		"Add a new value without altering existing ones (treated as a plain set for v1)")
 	rootCmd.AddCommand(configCmd)
 }
 
