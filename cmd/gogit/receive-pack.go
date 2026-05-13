@@ -30,6 +30,8 @@ var receivePackCmd = &cobra.Command{
 			return err
 		}
 
+		defer r.Close()
+
 		return transport.ReceivePack(
 			cmd.Context(),
 			r.Storer,

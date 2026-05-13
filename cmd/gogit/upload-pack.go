@@ -34,6 +34,8 @@ var uploadPackCmd = &cobra.Command{
 			return err
 		}
 
+		defer r.Close()
+
 		ctx := cmd.Context()
 
 		if uploadPackTimeout > 0 {

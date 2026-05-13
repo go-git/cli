@@ -3,3 +3,7 @@
 
 t2008-checkout-subdir.sh
 t5308-pack-detect-duplicates.sh
+t5325-reverse-index.sh
+# t5302-pack-index.sh and t5313-pack-bounds-checks.sh remain blocked on
+# additional setup-side gogit subcommands (update-index, write-tree,
+# commit-tree, ls-tree, update-ref) and a test-tool genrandom stub.

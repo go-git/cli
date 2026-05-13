@@ -22,6 +22,8 @@ var updateServerInfoCmd = &cobra.Command{
 			return err
 		}
 
+		defer r.Close()
+
 		store, ok := r.Storer.(*filesystem.Storage)
 		if !ok {
 			return errors.New("storer does not implement filesystem.Storage")

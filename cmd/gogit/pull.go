@@ -24,6 +24,8 @@ var pullCmd = &cobra.Command{
 			return err
 		}
 
+		defer repo.Close()
+
 		w, err := repo.Worktree()
 		if err != nil {
 			return err

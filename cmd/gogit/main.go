@@ -54,6 +54,14 @@ func init() {
 	trace.SetTarget(target)
 }
 
+func init() {
+	rootCmd.PersistentFlags().StringArrayVarP(&configOverridesRaw, "config", "c", nil,
+		"Override a configuration value for the duration of this command (key=value, may be repeated)")
+	rootCmd.PersistentPreRunE = func(_ *cobra.Command, _ []string) error {
+		return applyConfigOverridesFromFlags()
+	}
+}
+
 func main() {
 	for _, arg := range os.Args[1:] {
 		if arg == "--exec-path" || strings.HasPrefix(arg, "--exec-path=") {

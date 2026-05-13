@@ -4,16 +4,17 @@ import (
 	"fmt"
 
 	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing"
 	"github.com/spf13/cobra"
 )
 
 func init() {
-	rootCmd.AddCommand(addCmd)
+	rootCmd.AddCommand(revParseCmd)
 }
 
-var addCmd = &cobra.Command{
-	Use:   "add <pathspec>...",
-	Short: "Add file contents to the index",
+var revParseCmd = &cobra.Command{
+	Use:   "rev-parse <rev>...",
+	Short: "Pick out and massage parameters",
 	Args:  cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		r, err := git.PlainOpenWithOptions(".", &git.PlainOpenOptions{DetectDotGit: true})
@@ -23,18 +24,18 @@ var addCmd = &cobra.Command{
 
 		defer r.Close()
 
-		w, err := r.Worktree()
-		if err != nil {
-			return fmt.Errorf("failed to open worktree: %w", err)
-		}
-
-		for _, path := range args {
-			if _, err := w.Add(path); err != nil {
-				return fmt.Errorf("failed to add %s: %w", path, err)
+		for _, rev := range args {
+			h, err := r.ResolveRevision(plumbing.Revision(rev))
+			if err != nil {
+				return fmt.Errorf("resolve %s: %w", rev, err)
 			}
+
+			fmt.Fprintln(cmd.OutOrStdout(), h)
 		}
 
 		return nil
 	},
 	DisableFlagsInUseLine: true,
+	SilenceUsage:          true,
+	SilenceErrors:         true,
 }
