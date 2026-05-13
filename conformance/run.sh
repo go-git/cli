@@ -82,53 +82,17 @@ NO_PYTHON=YesPlease
 PAGER_ENV='LESS=FRX LV=-c'
 EOF
 
-# Stub test-tool: must be executable; test-lib.sh checks it exists.
-# Curated tests may invoke test-tool for prereq checks (e.g. TIME_IS_64BIT)
-# and for pack-trailer construction (`test-tool sha1 -b` from t/lib-pack.sh).
+# Build the Go-based test-tool helper at the location test-lib.sh expects.
+# It supplies the subcommands curated tests invoke (genrandom, delta, sha1/2,
+# date, path-utils, env-helper). Rebuilt on every run so source changes take
+# effect without manual cache invalidation, matching the policy used for
+# gogit itself.
 STUB_TEST_TOOL="$FAKE_BUILD_DIR/t/helper/test-tool"
-# Always rewrite the stub so changes to this script take effect immediately.
-cat > "$STUB_TEST_TOOL" <<'STUB'
-#!/bin/sh
-# Minimal test-tool stub for conformance harness.
-case "$1" in
-    date)
-        case "$2" in
-            is64bit)       date +%s | awk '{exit ($1 > 2147483647) ? 0 : 1}' ;;
-            time_t-is64bit) date +%s | awk '{exit ($1 > 2147483647) ? 0 : 1}' ;;
-            *) echo "test-tool stub: unimplemented date subcommand: $2" >&2; exit 1 ;;
-        esac
-        ;;
-    path-utils)
-        case "$2" in
-            file-size) wc -c < "$3" ;;
-            *) echo "test-tool stub: unimplemented path-utils subcommand: $2" >&2; exit 1 ;;
-        esac
-        ;;
-    env-helper) printenv "$2" ;;
-    sha1)
-        # `test-tool sha1 [-b]` computes the SHA1 of stdin. With -b the digest
-        # is emitted as 20 raw bytes (used by t/lib-pack.sh to build a pack
-        # trailer); without -b it's a 40-char hex string + newline.
-        if [ "$2" = "-b" ]; then
-            openssl dgst -sha1 -binary
-        else
-            openssl dgst -sha1 -hex | awk '{print $NF}'
-        fi
-        ;;
-    sha256)
-        if [ "$2" = "-b" ]; then
-            openssl dgst -sha256 -binary
-        else
-            openssl dgst -sha256 -hex | awk '{print $NF}'
-        fi
-        ;;
-    *)
-        echo "test-tool stub: unimplemented subcommand: $1" >&2
-        exit 1
-        ;;
-esac
-STUB
-chmod +x "$STUB_TEST_TOOL"
+# `go build` refuses to overwrite a non-Go-built file at the output path, so
+# clear any pre-existing stub (typically a leftover from an earlier shell-stub
+# version of this script) before invoking the build.
+rm -f "$STUB_TEST_TOOL"
+( cd "$REPO_ROOT" && go build -o "$STUB_TEST_TOOL" ./cmd/gogit-test-tool )
 
 export GIT_TEST_INSTALLED GIT_BUILD_DIR
 GIT_TEST_INSTALLED="$(cd "$BIN_DIR" && pwd)"

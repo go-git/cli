@@ -31,16 +31,12 @@ func init() {
 }
 
 var catFileCmd = &cobra.Command{
-	Use:   "cat-file (-e <oid> | --batch-check[=<format>])",
+	Use:   "cat-file (-e <oid> | --batch-check[=<format>] | <type> <oid>)",
 	Short: "Provide content or check existence of repository objects",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		batchCheckSet := cmd.Flags().Changed("batch-check")
 		if catFileExists && batchCheckSet {
 			return errors.New("-e and --batch-check are mutually exclusive")
-		}
-
-		if !catFileExists && !batchCheckSet {
-			return errors.New("one of -e or --batch-check is required")
 		}
 
 		r, err := git.PlainOpenWithOptions(".", &git.PlainOpenOptions{DetectDotGit: true})
@@ -50,15 +46,20 @@ var catFileCmd = &cobra.Command{
 
 		defer r.Close()
 
-		if catFileExists {
+		switch {
+		case catFileExists:
 			if len(args) != 1 {
 				return errors.New("-e requires exactly one <oid> argument")
 			}
 
 			return catFileExistsCheck(r, args[0])
+		case batchCheckSet:
+			return catFileBatchCheckRun(cmd, r, os.Stdin, catFileBatchCheckFormat)
+		case len(args) == 2:
+			return catFileTypedPrint(cmd, r, args[0], args[1])
+		default:
+			return errors.New("usage: cat-file (-e <oid> | --batch-check[=<fmt>] | <type> <oid>)")
 		}
-
-		return catFileBatchCheckRun(cmd, r, os.Stdin, catFileBatchCheckFormat)
 	},
 	DisableFlagsInUseLine: true,
 	SilenceUsage:          true,
@@ -72,6 +73,35 @@ func catFileExistsCheck(r *git.Repository, oid string) error { //nolint:unparam
 	h := plumbing.NewHash(oid)
 	if _, err := r.Storer.EncodedObject(plumbing.AnyObject, h); err != nil {
 		os.Exit(1)
+	}
+
+	return nil
+}
+
+// catFileTypedPrint resolves <oid>, verifies obj.Type().String() == typ,
+// and writes content to stdout. Silently exits non-zero on missing object
+// or type mismatch, matching `git cat-file <type> <oid>` semantics.
+func catFileTypedPrint(cmd *cobra.Command, r *git.Repository, typ, oid string) error {
+	h := plumbing.NewHash(oid)
+
+	obj, err := r.Storer.EncodedObject(plumbing.AnyObject, h)
+	if err != nil {
+		os.Exit(1)
+	}
+
+	if obj.Type().String() != typ {
+		os.Exit(1)
+	}
+
+	rd, err := obj.Reader()
+	if err != nil {
+		return err
+	}
+
+	defer rd.Close()
+
+	if _, err := io.Copy(cmd.OutOrStdout(), rd); err != nil {
+		return err
 	}
 
 	return nil

@@ -10,7 +10,7 @@ $(GOLANGCI):
 
 .PHONY: build
 build:
-	go build -o build/ ./...
+	go build -o build/bin/ ./...
 
 validate: validate-lint validate-dirty
 

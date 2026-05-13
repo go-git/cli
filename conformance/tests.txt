@@ -4,6 +4,35 @@
 t2008-checkout-subdir.sh
 t5308-pack-detect-duplicates.sh
 t5325-reverse-index.sh
-# t5302-pack-index.sh and t5313-pack-bounds-checks.sh remain blocked on
-# additional setup-side gogit subcommands (update-index, write-tree,
-# commit-tree, ls-tree, update-ref) and a test-tool genrandom stub.
+#
+# Not yet graduated:
+#
+# - t5302-pack-index.sh / t5313-pack-bounds-checks.sh: blocked on additional
+#   setup-side gogit subcommands (update-index, write-tree, commit-tree,
+#   ls-tree, update-ref).
+#
+# - t5303-pack-corruption-resilience.sh: 14/36 cases pass. The premise of
+#   the failing cases is "corrupt a pack entry, then write a loose copy of
+#   the same object — subsequent lookups should recover via the loose
+#   store". Top-level OID lookup in go-git already does pack-then-loose,
+#   so the directly-corrupt object's own lookup recovers. What does NOT
+#   recover is a SECOND object that is a pack delta against the corrupt
+#   one: when the pack reader resolves a REF_DELTA / OFS_DELTA, it reads
+#   the base bytes from the pack at the base's offset and does not fall
+#   back to a loose copy of the base when the in-pack base is unreadable.
+#
+#   Concrete repro (blob_2 is a delta against blob_1, blob_1's pack header
+#   is corrupted, a loose copy of blob_1 has been written):
+#     gogit cat-file blob <blob_1> → OK  (top-level pack-then-loose works)
+#     gogit cat-file blob <blob_2> → exit 1 (pack reader needs blob_1's
+#                                   content for the delta; reads it from
+#                                   the pack, fails on the corrupt header,
+#                                   does not retry via the loose store)
+#
+#   Upstream git uses lookup_object for the delta base, which goes
+#   through both pack and loose stores, so its recovery works.
+#
+#   All gogit/test-tool surface t5303 exercises is in place (prune-packed,
+#   cat-file <type> <oid>, test-tool genrandom/delta). Graduation pending
+#   a go-git change that retries delta-base resolution via the storer's
+#   OID lookup when the in-pack base read fails.

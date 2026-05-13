@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -78,5 +79,55 @@ func TestCatFileBatchCheck(t *testing.T) {
 
 	if stdout != want {
 		t.Fatalf("batch-check output mismatch:\n got: %q\nwant: %q", stdout, want)
+	}
+}
+
+func TestCatFileTypedPrint(t *testing.T) {
+	t.Parallel()
+	repo := t.TempDir()
+
+	if _, _, err := runGogit(t, repo, "init"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	stdout, _, err := runGogitStdin(t, repo, "base\n", "hash-object", "-w", "--stdin")
+	if err != nil {
+		t.Fatalf("hash-object: %v", err)
+	}
+
+	oid := strings.TrimSpace(stdout)
+
+	got, _, err := runGogit(t, repo, "cat-file", "blob", oid)
+	if err != nil {
+		t.Fatalf("cat-file blob: %v", err)
+	}
+
+	if got != "base\n" {
+		t.Fatalf("cat-file blob content = %q want %q", got, "base\n")
+	}
+}
+
+func TestCatFileTypedMismatch(t *testing.T) {
+	t.Parallel()
+	repo := t.TempDir()
+
+	if _, _, err := runGogit(t, repo, "init"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	stdout, _, err := runGogitStdin(t, repo, "base\n", "hash-object", "-w", "--stdin")
+	if err != nil {
+		t.Fatalf("hash-object: %v", err)
+	}
+
+	oid := strings.TrimSpace(stdout)
+
+	out, _, err := runGogit(t, repo, "cat-file", "commit", oid)
+	if err == nil {
+		t.Fatalf("expected non-zero exit for type mismatch, got success (stdout=%q)", out)
+	}
+
+	if out != "" {
+		t.Fatalf("expected no stdout on mismatch, got %q", out)
 	}
 }
