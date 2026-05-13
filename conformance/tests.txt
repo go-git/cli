@@ -24,6 +24,13 @@ t0001-init.sh @sha1,sha256 52,53,56,60,61
 # malformed-object validation. Both modes exercise the sha256 OIDs baked into
 # the upstream test's oid cache.
 t1007-hash-object.sh @sha1,sha256 1,3-12,20-23,37-40
+# t3700 add: cases that exercise `add` + the new `ls-files` reader. Includes
+# the index round-trip case 3 ("Post-check that foo is in the index"), which
+# in sha256 mode also verifies that index entries carry 32-byte hashes.
+# Excluded cases need gogit surface that doesn't exist yet (--chmod,
+# --refresh, --ignore-errors, core.fsyncmethod=batch, update-index --add,
+# unmerged-entry handling, embedded-repo detection).
+t3700-add.sh @sha1,sha256 1,3,4,12,13,20,21,34,36,40,42,44
 #
 # Not yet graduated:
 #
