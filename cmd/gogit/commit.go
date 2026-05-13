@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strconv"
 	"time"
 
 	"github.com/go-git/go-git/v6"
@@ -32,6 +31,8 @@ var commitCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("failed to open repository: %w", err)
 		}
+
+		defer r.Close()
 
 		w, err := r.Worktree()
 		if err != nil {
@@ -98,20 +99,16 @@ func parseGitDate(s string) (time.Time, error) {
 		return time.Time{}, err
 	}
 
-	hours, err := strconv.Atoi(zone[:len(zone)-2])
+	// Defer the sign/range parsing to time.Parse with the canonical "-0700"
+	// layout: it validates length and digits and handles both positive and
+	// negative offsets correctly. The reference value's date components are
+	// irrelevant — we only consume the resulting zone offset.
+	zt, err := time.Parse("-0700", zone)
 	if err != nil {
-		return time.Time{}, err
+		return time.Time{}, fmt.Errorf("invalid zone %q: %w", zone, err)
 	}
 
-	mins, err := strconv.Atoi(zone[len(zone)-2:])
-	if err != nil {
-		return time.Time{}, err
-	}
-
-	offset := hours*3600 + mins*60
-	if zone[0] == '-' {
-		offset = -offset
-	}
+	_, offset := zt.Zone()
 
 	return time.Unix(secs, 0).In(time.FixedZone(zone, offset)), nil
 }

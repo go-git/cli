@@ -17,17 +17,22 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		panic(err)
 	}
-	defer os.RemoveAll(dir)
 
 	gogitBin = filepath.Join(dir, "gogit")
 	build := exec.Command("go", "build", "-o", gogitBin, ".")
 
 	build.Stderr = os.Stderr
 	if err := build.Run(); err != nil {
+		_ = os.RemoveAll(dir)
+
 		panic(err)
 	}
 
-	os.Exit(m.Run())
+	// os.Exit skips deferred functions, so run cleanup explicitly before exit.
+	code := m.Run()
+	_ = os.RemoveAll(dir)
+
+	os.Exit(code)
 }
 
 func runGogit(t *testing.T, dir string, args ...string) (string, string, error) {
