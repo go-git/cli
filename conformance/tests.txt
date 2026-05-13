@@ -18,6 +18,12 @@ t1601-index-bogus.sh
 #   60 extensions.objectFormat is not allowed with repo version 0
 #   61 init rejects attempts to initialize with different hash
 t0001-init.sh @sha1,sha256 52,53,56,60,61
+# t1007 hash-object: core hashing surface (file, stdin, -w, bogus type names,
+# --literally, --stdin outside a repo). Excluded cases need flags gogit lacks
+# (--stdin-paths, --path, --no-filters), crlf filtering, or strict
+# malformed-object validation. Both modes exercise the sha256 OIDs baked into
+# the upstream test's oid cache.
+t1007-hash-object.sh @sha1,sha256 1,3-12,20-23,37-40
 #
 # Not yet graduated:
 #
