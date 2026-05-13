@@ -1,11 +1,23 @@
 # Curated upstream tests run against gogit.
 # Add one filename per line. Lines starting with # are ignored.
+# Optional tokens after the filename, in any order:
+#   `@sha1,sha256` — comma-separated hash modes this entry participates in
+#                    (default: sha1 only).
+#   selector       — upstream `--run=` form, e.g. `1-5,7` or `!2`.
 
 t2008-checkout-subdir.sh
 t5308-pack-detect-duplicates.sh
 t5325-reverse-index.sh
 t1600-index.sh 1-5,7
 t1601-index-bogus.sh
+# t0001 sha256 surface — runtime-numbered cases (the `for hash in sha1 sha256`
+# loop expands 1 source-level case into 2, shifting the upper cases by one):
+#   52 init honors GIT_DEFAULT_HASH
+#   53 init honors --object-format
+#   56 --object-format overrides GIT_DEFAULT_HASH
+#   60 extensions.objectFormat is not allowed with repo version 0
+#   61 init rejects attempts to initialize with different hash
+t0001-init.sh @sha1,sha256 52,53,56,60,61
 #
 # Not yet graduated:
 #
