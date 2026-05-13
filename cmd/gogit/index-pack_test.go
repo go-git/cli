@@ -93,3 +93,88 @@ func TestIndexPackStrictRejectsDuplicates(t *testing.T) {
 		t.Fatalf("expected no pack file left behind, got %d: %v", len(matches), matches)
 	}
 }
+
+func TestIndexPackExplicitOutputPath(t *testing.T) {
+	t.Parallel()
+	repo := t.TempDir()
+
+	if _, _, err := runGogit(t, repo, "init"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	pack := makePack(t, 1)
+	idxOut := filepath.Join(repo, "custom.idx")
+
+	if _, _, err := runGogitStdin(t, repo, string(pack), "index-pack", "-o", idxOut, "--stdin"); err != nil {
+		t.Fatalf("index-pack -o: %v", err)
+	}
+
+	if _, err := os.Stat(idxOut); err != nil {
+		t.Fatalf("expected idx at %s: %v", idxOut, err)
+	}
+}
+
+func TestIndexPackVerifyOK(t *testing.T) {
+	t.Parallel()
+
+	repo := t.TempDir()
+	if _, _, err := runGogit(t, repo, "init"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	pack := makePack(t, 1)
+	if _, _, err := runGogitStdin(t, repo, string(pack), "index-pack", "--stdin"); err != nil {
+		t.Fatalf("index-pack: %v", err)
+	}
+
+	matches, _ := filepath.Glob(filepath.Join(repo, ".git", "objects", "pack", "pack-*.pack"))
+	if len(matches) != 1 {
+		t.Fatalf("expected 1 pack")
+	}
+
+	if _, _, err := runGogit(t, repo, "index-pack", "--verify", matches[0]); err != nil {
+		t.Fatalf("--verify: %v", err)
+	}
+}
+
+func TestIndexPackRevIndex(t *testing.T) {
+	t.Parallel()
+
+	repo := t.TempDir()
+	if _, _, err := runGogit(t, repo, "init"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	pack := makePack(t, 1)
+	if _, _, err := runGogitStdin(t, repo, string(pack), "index-pack", "--rev-index", "--stdin"); err != nil {
+		t.Fatalf("--rev-index: %v", err)
+	}
+
+	matches, _ := filepath.Glob(filepath.Join(repo, ".git", "objects", "pack", "pack-*.rev"))
+	if len(matches) != 1 {
+		t.Fatalf("expected 1 .rev, got %d", len(matches))
+	}
+}
+
+func TestIndexPackVerifyRevIndexOK(t *testing.T) {
+	t.Parallel()
+
+	repo := t.TempDir()
+	if _, _, err := runGogit(t, repo, "init"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	pack := makePack(t, 1)
+	if _, _, err := runGogitStdin(t, repo, string(pack), "index-pack", "--rev-index", "--stdin"); err != nil {
+		t.Fatalf("index-pack --rev-index: %v", err)
+	}
+
+	matches, _ := filepath.Glob(filepath.Join(repo, ".git", "objects", "pack", "pack-*.pack"))
+	if len(matches) != 1 {
+		t.Fatalf("expected 1 pack, got %d", len(matches))
+	}
+
+	if _, _, err := runGogit(t, repo, "index-pack", "--verify", "--rev-index", matches[0]); err != nil {
+		t.Fatalf("--verify --rev-index: %v", err)
+	}
+}

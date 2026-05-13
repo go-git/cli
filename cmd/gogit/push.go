@@ -38,6 +38,8 @@ var pushCmd = &cobra.Command{
 			return err
 		}
 
+		defer r.Close()
+
 		cfg, err := r.Config()
 		if err != nil {
 			return fmt.Errorf("failed to get repository config: %w", err)

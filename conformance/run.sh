@@ -23,7 +23,13 @@ echo "Building gogit..."
 ( cd "$REPO_ROOT" && go build -o "$BIN_DIR/gogit" ./cmd/gogit )
 ln -sf gogit "$BIN_DIR/git"
 
-# Resolve upstream tests source.
+# Resolve upstream tests source. The clone/fetch/reset commands below use the
+# HOST'S `git` binary, not gogit, by design:
+#   - gogit is not yet built at this point in the script.
+#   - We are cloning over HTTPS from github.com; this is test infrastructure,
+#     not part of what is being tested.
+#   - We want canonical Git semantics for the test sources themselves so any
+#     gogit divergence shows up in test results rather than in test setup.
 if [ -n "${GIT_SRC:-}" ] && [ -f "$GIT_SRC/t/test-lib.sh" ]; then
     UPSTREAM_T="$GIT_SRC/t"
     echo "Using GIT_SRC=$GIT_SRC"
@@ -76,59 +82,24 @@ NO_PYTHON=YesPlease
 PAGER_ENV='LESS=FRX LV=-c'
 EOF
 
-# Stub test-tool: must be executable; test-lib.sh checks it exists.
-# Curated tests may invoke test-tool for prereq checks (e.g. TIME_IS_64BIT)
-# and for pack-trailer construction (`test-tool sha1 -b` from t/lib-pack.sh).
+# Build the Go-based test-tool helper at the location test-lib.sh expects.
+# It supplies the subcommands curated tests invoke (genrandom, delta, sha1/2,
+# date, path-utils, env-helper). Rebuilt on every run so source changes take
+# effect without manual cache invalidation, matching the policy used for
+# gogit itself.
 STUB_TEST_TOOL="$FAKE_BUILD_DIR/t/helper/test-tool"
-# Always rewrite the stub so changes to this script take effect immediately.
-cat > "$STUB_TEST_TOOL" <<'STUB'
-#!/bin/sh
-# Minimal test-tool stub for conformance harness.
-case "$1" in
-    date)
-        case "$2" in
-            is64bit)       date +%s | awk '{exit ($1 > 2147483647) ? 0 : 1}' ;;
-            time_t-is64bit) date +%s | awk '{exit ($1 > 2147483647) ? 0 : 1}' ;;
-            *) echo "test-tool stub: unimplemented date subcommand: $2" >&2; exit 1 ;;
-        esac
-        ;;
-    path-utils)
-        case "$2" in
-            file-size) wc -c < "$3" ;;
-            *) echo "test-tool stub: unimplemented path-utils subcommand: $2" >&2; exit 1 ;;
-        esac
-        ;;
-    env-helper) printenv "$2" ;;
-    sha1)
-        # `test-tool sha1 [-b]` computes the SHA1 of stdin. With -b the digest
-        # is emitted as 20 raw bytes (used by t/lib-pack.sh to build a pack
-        # trailer); without -b it's a 40-char hex string + newline.
-        if [ "$2" = "-b" ]; then
-            openssl dgst -sha1 -binary
-        else
-            openssl dgst -sha1 -hex | awk '{print $NF}'
-        fi
-        ;;
-    sha256)
-        if [ "$2" = "-b" ]; then
-            openssl dgst -sha256 -binary
-        else
-            openssl dgst -sha256 -hex | awk '{print $NF}'
-        fi
-        ;;
-    *)
-        echo "test-tool stub: unimplemented subcommand: $1" >&2
-        exit 1
-        ;;
-esac
-STUB
-chmod +x "$STUB_TEST_TOOL"
+# `go build` refuses to overwrite a non-Go-built file at the output path, so
+# clear any pre-existing stub (typically a leftover from an earlier shell-stub
+# version of this script) before invoking the build.
+rm -f "$STUB_TEST_TOOL"
+( cd "$REPO_ROOT" && go build -o "$STUB_TEST_TOOL" ./cmd/gogit-test-tool )
 
 export GIT_TEST_INSTALLED GIT_BUILD_DIR
 GIT_TEST_INSTALLED="$(cd "$BIN_DIR" && pwd)"
 GIT_BUILD_DIR="$(cd "$FAKE_BUILD_DIR" && pwd)"
 
 # Decide what to run.
+TESTS_SELECTORS=()
 if [ "$#" -ge 1 ]; then
     TEST_NAME="$1"
     SELECTOR="${2:-}"
@@ -138,12 +109,27 @@ elif [ -n "${TESTS:-}" ]; then
     SELECTOR=""
 else
     # Read curated list, ignoring blank lines and comments.
+    # Each non-comment line in tests.txt is either `<filename>` or
+    # `<filename> <selector>`. The selector is the same form upstream's
+    # --run= accepts (e.g. `1-5,7`, `!2`). It is forwarded to the test
+    # script so a single test can be graduated with a subset of its cases
+    # (used for t1600 which has a submodule case out of scope here).
     TESTS_TO_RUN=()
+    TESTS_SELECTORS=()
     while IFS= read -r line; do
         case "$line" in
             ''|\#*) continue ;;
         esac
-        TESTS_TO_RUN+=("$line")
+
+        name="${line%% *}"
+        sel=""
+        if [ "$name" != "$line" ]; then
+            sel="${line#"$name" }"
+            sel="${sel## }"
+        fi
+
+        TESTS_TO_RUN+=("$name")
+        TESTS_SELECTORS+=("$sel")
     done < "$REPO_ROOT/conformance/tests.txt"
     SELECTOR=""
 fi
@@ -162,26 +148,63 @@ INTERACTIVE=0
 if [ -t 1 ]; then
     INTERACTIVE=1
 fi
-for test_script in "${TESTS_TO_RUN[@]}"; do
+
+# Verbose mode keeps upstream's full test output (the -v `expecting success...`
+# trace plus every `ok N - title` and per-test command output). Summary mode
+# (the default) keeps the same upstream invocation but filters stdout down to
+# harness headers, `not ok` lines, the per-script summary line, and the plan.
+# CI sets CONFORMANCE_VERBOSE=1 so its captured logs stay inspectable.
+VERBOSE=0
+case "${CONFORMANCE_VERBOSE:-}" in
+    1|true|TRUE|yes|YES) VERBOSE=1 ;;
+esac
+
+# summary_filter is the identity function in verbose mode and a `grep` keeping
+# only summary-worthy lines otherwise.
+summary_filter() {
+    if [ "$VERBOSE" = 1 ]; then
+        cat
+    else
+        grep -E '^(=== Running|not ok|# (passed|failed|fixed|still have|skip)|1\.\.[0-9]+)' || true
+    fi
+}
+
+for i in "${!TESTS_TO_RUN[@]}"; do
+    test_script="${TESTS_TO_RUN[$i]}"
+
     if [ ! -f "$UPSTREAM_T/$test_script" ]; then
         echo "Skipping missing test: $test_script" >&2
         EXIT_CODE=1
         continue
     fi
+
     echo "=== Running $test_script ==="
-    selector_args=()
+
+    # CLI-provided SELECTOR (single-test invocation form) takes priority over
+    # any per-entry selector parsed from tests.txt.
+    per_test_sel=""
     if [ -n "$SELECTOR" ]; then
-        selector_args=(--run="$SELECTOR")
+        per_test_sel="$SELECTOR"
+    elif [ "$i" -lt "${#TESTS_SELECTORS[@]}" ]; then
+        per_test_sel="${TESTS_SELECTORS[$i]}"
     fi
+
+    selector_args=()
+    if [ -n "$per_test_sel" ]; then
+        selector_args=(--run="$per_test_sel")
+    fi
+    # 2>&1 inside the subshell so the upstream `-v` trace, which goes to the
+    # test script's stderr, also reaches summary_filter; otherwise it would
+    # bypass the grep and leak straight to our stderr in summary mode.
     if [ "$INTERACTIVE" = 1 ]; then
-        if ( cd "$UPSTREAM_T" && sh "./$test_script" -v -i ${selector_args[@]+"${selector_args[@]}"} ); then
+        if ( cd "$UPSTREAM_T" && sh "./$test_script" -v -i ${selector_args[@]+"${selector_args[@]}"} 2>&1 ) | summary_filter; then
             :
         else
             EXIT_CODE=1
         fi
     else
         tap_file="$RESULTS_DIR/$test_script.tap"
-        if ( cd "$UPSTREAM_T" && sh "./$test_script" -v -i ${selector_args[@]+"${selector_args[@]}"} ) | tee "$tap_file"; then
+        if ( cd "$UPSTREAM_T" && sh "./$test_script" -v -i ${selector_args[@]+"${selector_args[@]}"} 2>&1 ) | tee "$tap_file" | summary_filter; then
             :
         else
             EXIT_CODE=1

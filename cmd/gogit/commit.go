@@ -6,6 +6,7 @@ import (
 	"os"
 	"time"
 
+	internalobject "github.com/go-git/cli/internal/plumbing/object"
 	"github.com/go-git/go-git/v6"
 	"github.com/go-git/go-git/v6/plumbing/object"
 	"github.com/spf13/cobra"
@@ -78,7 +79,7 @@ func signatureFromEnv(nameVar, emailVar, dateVar string) (*object.Signature, err
 	sig := &object.Signature{Name: name, Email: email, When: time.Now()}
 
 	if date != "" {
-		t, err := parseGitDate(date)
+		t, err := internalobject.ParseGitDate(date)
 		if err != nil {
 			return nil, fmt.Errorf("invalid %s=%q: %w", dateVar, date, err)
 		}
@@ -87,28 +88,4 @@ func signatureFromEnv(nameVar, emailVar, dateVar string) (*object.Signature, err
 	}
 
 	return sig, nil
-}
-
-// parseGitDate parses the "<unix-seconds> <±HHMM>" format used by GIT_*_DATE.
-func parseGitDate(s string) (time.Time, error) {
-	var secs int64
-
-	var zone string
-
-	if _, err := fmt.Sscanf(s, "%d %s", &secs, &zone); err != nil {
-		return time.Time{}, err
-	}
-
-	// Defer the sign/range parsing to time.Parse with the canonical "-0700"
-	// layout: it validates length and digits and handles both positive and
-	// negative offsets correctly. The reference value's date components are
-	// irrelevant — we only consume the resulting zone offset.
-	zt, err := time.Parse("-0700", zone)
-	if err != nil {
-		return time.Time{}, fmt.Errorf("invalid zone %q: %w", zone, err)
-	}
-
-	_, offset := zt.Zone()
-
-	return time.Unix(secs, 0).In(time.FixedZone(zone, offset)), nil
 }

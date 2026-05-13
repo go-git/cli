@@ -33,6 +33,8 @@ var fetchCmd = &cobra.Command{
 			return err
 		}
 
+		defer r.Close()
+
 		remote, err := r.Remote("origin")
 		if err != nil {
 			return err
