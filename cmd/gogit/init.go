@@ -12,11 +12,13 @@ import (
 var (
 	initTemplate     string
 	initObjectFormat string
+	initQuiet        bool
 )
 
 func init() {
 	initCmd.Flags().StringVar(&initTemplate, "template", "", "Template directory (accepted for compatibility, ignored)")
 	initCmd.Flags().StringVar(&initObjectFormat, "object-format", "", "Object hash algorithm: sha1 or sha256")
+	initCmd.Flags().BoolVarP(&initQuiet, "quiet", "q", false, "Suppress all output except errors")
 	rootCmd.AddCommand(initCmd)
 }
 
@@ -39,7 +41,9 @@ var initCmd = &cobra.Command{
 			return fmt.Errorf("failed to init repository: %w", err)
 		}
 
-		fmt.Fprintf(cmd.OutOrStdout(), "Initialized empty Git repository in %s\n", dir)
+		if !initQuiet {
+			fmt.Fprintf(cmd.OutOrStdout(), "Initialized empty Git repository in %s\n", dir)
+		}
 
 		return nil
 	},
