@@ -29,3 +29,4 @@ endif
 conformance:
 	./conformance/run.sh --hash=sha1
 	./conformance/run.sh --hash=sha256
+	./conformance/local/run.sh
