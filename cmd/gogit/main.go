@@ -106,6 +106,13 @@ func main() {
 	os.Args = append(os.Args[:1], rest...)
 
 	err := rootCmd.Execute()
+
+	// Restore any .git/config we patched on this command's behalf via `-c`
+	// overrides. Runs on both success and error paths so the on-disk file
+	// is back to its starting contents before the process exits. A SIGKILL
+	// or similar abrupt termination would skip this — accepted tradeoff.
+	restoreConfigBackup()
+
 	if err != nil {
 		var rerr *transport.RemoteError
 		if errors.As(err, &rerr) {
