@@ -12,6 +12,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// Note: go-git's PlainCloneContext calls checkTargetDirIsEmpty before
+// initialising the clone, so we don't need a wrapper to guard against
+// non-empty / non-directory targets — go-git already returns
+// ErrTargetDirNotEmpty in those cases.
+
 var (
 	cloneBare     bool
 	cloneProgress bool
@@ -67,10 +72,6 @@ var cloneCmd = &cobra.Command{
 
 		fmt.Fprintf(cmd.ErrOrStderr(), "Cloning into '%s'...\n", dir)
 
-		if err := ensureCloneTargetAvailable(dir); err != nil {
-			return err
-		}
-
 		_, err = git.PlainClone(dir, &opts)
 
 		return err
@@ -98,37 +99,6 @@ func resolveCloneURL(arg string) string {
 	}
 
 	return abs
-}
-
-// ensureCloneTargetAvailable matches upstream's pre-clone check: the target
-// must not already be a non-empty directory, and must not be a non-directory
-// path (e.g. an existing file). go-git's PlainClone will happily merge a
-// clone into a populated directory, which lets clones silently overwrite
-// unrelated content.
-func ensureCloneTargetAvailable(dir string) error {
-	info, err := os.Stat(dir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-
-		return err
-	}
-
-	if !info.IsDir() {
-		return fmt.Errorf("fatal: destination path %q already exists and is not an empty directory", dir)
-	}
-
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return err
-	}
-
-	if len(entries) > 0 {
-		return fmt.Errorf("fatal: destination path %q already exists and is not an empty directory", dir)
-	}
-
-	return nil
 }
 
 // hasURLScheme reports whether arg begins with a recognised URL scheme. We

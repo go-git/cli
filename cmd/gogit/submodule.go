@@ -163,10 +163,6 @@ func runSubmoduleAdd(cmd *cobra.Command, args []string) error {
 	cloneURL := resolveCloneURL(repoArg)
 	cloneTarget := filepath.Join(parentRoot, relPath)
 
-	if err := ensureCloneTargetAvailable(cloneTarget); err != nil {
-		return err
-	}
-
 	sub, err := git.PlainClone(cloneTarget, &git.CloneOptions{URL: cloneURL})
 	if err != nil {
 		return fmt.Errorf("submodule add: clone %q: %w", repoArg, err)
