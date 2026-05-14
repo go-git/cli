@@ -5,10 +5,18 @@
 #                    (default: sha1 only).
 #   selector       — upstream `--run=` form, e.g. `1-5,7` or `!2`.
 
-t2008-checkout-subdir.sh
-t5308-pack-detect-duplicates.sh
+t2008-checkout-subdir.sh @sha1,sha256
+t5308-pack-detect-duplicates.sh @sha1,sha256
+# t5325 stays sha1-only: setup case 1 fails in sha256 mode with
+# "malformed pack file: checksum mismatch" — gogit's pack writer
+# produces a sha256-formatted pack whose trailer doesn't round-trip
+# through go-git's reader. Real bug worth filing separately.
 t5325-reverse-index.sh
-t1600-index.sh 1-5,7
+t1600-index.sh @sha1,sha256 1-5,7
+# t1601 stays sha1-only: the premise is "tree with null sha1" / "read-tree
+# refuses null sha1", which doesn't translate to sha256 — building the
+# same tree under sha256 produces a non-null sha256 hash and the
+# null-rejection no longer triggers.
 t1601-index-bogus.sh
 # t0001 sha256 surface — runtime-numbered cases (the `for hash in sha1 sha256`
 # loop expands 1 source-level case into 2, shifting the upper cases by one):
