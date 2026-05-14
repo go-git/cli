@@ -13,9 +13,10 @@ import (
 )
 
 // Note: go-git's PlainCloneContext calls checkTargetDirIsEmpty before
-// initialising the clone, so we don't need a wrapper to guard against
-// non-empty / non-directory targets — go-git already returns
-// ErrTargetDirNotEmpty in those cases.
+// initialising the clone, so the non-empty / non-directory target guard
+// is upstream. That check uses osfs.Default (rooted at "/"), so it only
+// fires reliably when given an absolute path — the gogit wrapper below
+// resolves the destination via filepath.Abs before handing it off.
 
 var (
 	cloneBare     bool
@@ -72,7 +73,12 @@ var cloneCmd = &cobra.Command{
 
 		fmt.Fprintf(cmd.ErrOrStderr(), "Cloning into '%s'...\n", dir)
 
-		_, err = git.PlainClone(dir, &opts)
+		absDir, err := filepath.Abs(dir)
+		if err != nil {
+			return err
+		}
+
+		_, err = git.PlainClone(absDir, &opts)
 
 		return err
 	},
