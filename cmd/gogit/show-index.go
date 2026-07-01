@@ -32,6 +32,7 @@ var showIndexCmd = &cobra.Command{
 
 func showIndexRun(in io.Reader, out io.Writer) error {
 	idx := idxfile.NewMemoryIndex(crypto.SHA1.Size())
+
 	idxIn, err := idxInput(in)
 	if err != nil {
 		return err
@@ -79,6 +80,7 @@ func idxInput(in io.Reader) (idxfile.Input, error) {
 
 type memoryIdxInput struct {
 	*bytes.Reader
+
 	size int64
 }
 
