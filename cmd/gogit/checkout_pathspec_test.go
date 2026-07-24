@@ -5,10 +5,17 @@ import (
 	"testing"
 )
 
+const (
+	testRepoRoot = "/repo"
+	testFile0    = "file0"
+	testDirFile1 = "dir1/file1"
+	testSubDir1  = "/repo/dir1"
+)
+
 func TestResolvePathspec(t *testing.T) {
 	t.Parallel()
 
-	root := "/repo"
+	root := testRepoRoot
 
 	tests := []struct {
 		name    string
@@ -17,15 +24,15 @@ func TestResolvePathspec(t *testing.T) {
 		want    string
 		wantErr bool
 	}{
-		{name: "file at root from root", cwd: "/repo", spec: "file0", want: "file0"},
-		{name: "subdir file from root", cwd: "/repo", spec: "dir1/file1", want: "dir1/file1"},
-		{name: "dotdot back to root from subdir", cwd: "/repo/dir1", spec: "../file0", want: "file0"},
-		{name: "sibling via dotdot", cwd: "/repo/dir1", spec: "../dir2/file2", want: "dir2/file2"},
-		{name: "complex relative", cwd: "/repo/dir1", spec: "../dir1/../dir1/file1", want: "dir1/file1"},
-		{name: "directory pathspec", cwd: "/repo", spec: "dir1", want: "dir1"},
-		{name: "parent escape from root", cwd: "/repo", spec: "../Makefile", wantErr: true},
-		{name: "parent file from subdir", cwd: "/repo/dir1", spec: "../file0", want: "file0"},
-		{name: "escape from subdir", cwd: "/repo/dir1", spec: "../../file0", wantErr: true},
+		{name: "file at root from root", cwd: testRepoRoot, spec: testFile0, want: testFile0},
+		{name: "subdir file from root", cwd: testRepoRoot, spec: testDirFile1, want: testDirFile1},
+		{name: "dotdot back to root from subdir", cwd: testSubDir1, spec: "../file0", want: testFile0},
+		{name: "sibling via dotdot", cwd: testSubDir1, spec: "../dir2/file2", want: "dir2/file2"},
+		{name: "complex relative", cwd: testSubDir1, spec: "../dir1/../dir1/file1", want: testDirFile1},
+		{name: "directory pathspec", cwd: testRepoRoot, spec: "dir1", want: "dir1"},
+		{name: "parent escape from root", cwd: testRepoRoot, spec: "../Makefile", wantErr: true},
+		{name: "parent file from subdir", cwd: testSubDir1, spec: "../file0", want: testFile0},
+		{name: "escape from subdir", cwd: testSubDir1, spec: "../../file0", wantErr: true},
 	}
 
 	for _, tc := range tests {

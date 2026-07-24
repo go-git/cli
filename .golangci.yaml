@@ -24,6 +24,7 @@ linters:
     - revive
     - wrapcheck
     - wsl
+    - gomodguard
   exclusions:
     generated: lax
     presets:

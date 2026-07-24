@@ -11,6 +11,7 @@ import (
 const (
 	defaultIndexVersion   uint32 = 2
 	manyFilesIndexVersion uint32 = 4
+	gitConfigTrue                = "true"
 )
 
 // envLookup mirrors os.LookupEnv. Injected so tests can run without touching
@@ -58,7 +59,7 @@ func pickIndexVersion(cfg *config.Config, env envLookup, hadExistingIndex bool, 
 			}
 		}
 
-		if mf := cfg.Raw.Section("feature").Option("manyFiles"); mf == "true" {
+		if mf := cfg.Raw.Section("feature").Option("manyFiles"); mf == gitConfigTrue {
 			return manyFilesIndexVersion
 		}
 	}
