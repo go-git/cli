@@ -68,9 +68,8 @@ func TestAddWarnsBogusEnvVersion(t *testing.T) {
 		t.Fatalf("add: %v\nstderr: %s", err, stderr)
 	}
 
-	wantPrefix := "warning: GIT_INDEX_VERSION set, but the value is invalid.\nUsing version 2\n"
-	if !strings.HasPrefix(stderr, wantPrefix) {
-		t.Fatalf("stderr = %q; want prefix %q", stderr, wantPrefix)
+	if !strings.HasPrefix(stderr, warnEnvVersionInvalid) {
+		t.Fatalf("stderr = %q; want prefix %q", stderr, warnEnvVersionInvalid)
 	}
 }
 

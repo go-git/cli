@@ -8,6 +8,8 @@ import (
 	gogitconfig "github.com/go-git/go-git/v6/config"
 )
 
+const warnEnvVersionInvalid = "warning: GIT_INDEX_VERSION set, but the value is invalid.\nUsing version 2\n"
+
 func TestPickIndexVersion(t *testing.T) {
 	t.Parallel()
 
@@ -26,11 +28,11 @@ func TestPickIndexVersion(t *testing.T) {
 		{name: "env=4", envSet: true, envValue: "4", wantVersion: 4},
 		{
 			name: "env=2bogus", envSet: true, envValue: "2bogus", wantVersion: 2,
-			wantWarnPrefix: "warning: GIT_INDEX_VERSION set, but the value is invalid.\nUsing version 2\n",
+			wantWarnPrefix: warnEnvVersionInvalid,
 		},
 		{
 			name: "env=1 out of bounds", envSet: true, envValue: "1", wantVersion: 2,
-			wantWarnPrefix: "warning: GIT_INDEX_VERSION set, but the value is invalid.\nUsing version 2\n",
+			wantWarnPrefix: warnEnvVersionInvalid,
 		},
 		{name: "env bogus but existing index", envSet: true, envValue: "1", hadExistingIndex: true, wantVersion: 2},
 		{name: "config=3 silently demotes to 2", configVersion: "3", wantVersion: 2},
@@ -39,10 +41,10 @@ func TestPickIndexVersion(t *testing.T) {
 			wantWarnPrefix: "warning: index.version set, but the value is invalid.\nUsing version 2\n",
 		},
 		{name: "config invalid but existing index", configVersion: "5", hadExistingIndex: true, wantVersion: 2},
-		{name: "manyFiles default 4", manyFiles: "true", wantVersion: 4},
-		{name: "manyFiles overridden by config=2", configVersion: "2", manyFiles: "true", wantVersion: 2},
+		{name: "manyFiles default 4", manyFiles: gitConfigTrue, wantVersion: 4},
+		{name: "manyFiles overridden by config=2", configVersion: "2", manyFiles: gitConfigTrue, wantVersion: 2},
 		{name: "env wins over config", envSet: true, envValue: "4", configVersion: "2", wantVersion: 4},
-		{name: "env wins over manyFiles", envSet: true, envValue: "2", manyFiles: "true", wantVersion: 2},
+		{name: "env wins over manyFiles", envSet: true, envValue: "2", manyFiles: gitConfigTrue, wantVersion: 2},
 	}
 
 	for _, tc := range tests {

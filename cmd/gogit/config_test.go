@@ -12,7 +12,7 @@ func TestSplitKV(t *testing.T) {
 		k, v string
 		ok   bool
 	}{
-		{in: "pack.writeReverseIndex=true", k: "pack.writeReverseIndex", v: "true", ok: true},
+		{in: "pack.writeReverseIndex=true", k: "pack.writeReverseIndex", v: gitConfigTrue, ok: true},
 		{in: "pack.writeReverseIndex=", k: "pack.writeReverseIndex", v: "", ok: true},
 		{in: "noequals", ok: false},
 		{in: "", ok: false},
@@ -40,7 +40,7 @@ func TestConfigBoolOverridesRepoConfig(t *testing.T) {
 		t.Fatalf("default false: got %v", got)
 	}
 
-	applyConfigOverride("pack.writeReverseIndex", "true")
+	applyConfigOverride("pack.writeReverseIndex", gitConfigTrue)
 
 	if got := configBool("pack.writeReverseIndex", nil, false); got != true {
 		t.Fatalf("override true: got %v", got)
