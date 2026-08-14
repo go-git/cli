@@ -2,7 +2,7 @@ module github.com/go-git/cli
 
 go 1.25.0
 
-toolchain go1.25.12
+toolchain go1.25.13
 
 require (
 	github.com/go-git/go-billy/v6 v6.0.0-alpha.2
