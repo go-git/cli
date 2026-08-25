@@ -82,6 +82,18 @@ func main() {
 
 	err := rootCmd.Execute()
 	if err != nil {
+		// Some commands need git's own exit statuses, and git stays
+		// silent for several of them, so gitExitError carries both the
+		// code and whether anything is printed.
+		var gerr *gitExitError
+		if errors.As(err, &gerr) {
+			if gerr.msg != "" {
+				fmt.Fprintln(os.Stderr, gerr.msg)
+			}
+
+			os.Exit(gerr.code)
+		}
+
 		var rerr *transport.RemoteError
 		if errors.As(err, &rerr) {
 			fmt.Fprintln(os.Stderr, rerr)

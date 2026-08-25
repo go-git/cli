@@ -50,7 +50,7 @@ func runGogit(t *testing.T, dir string, args ...string) (string, string, error) 
 	return stdout.String(), stderr.String(), err
 }
 
-func runGogitEnv(t *testing.T, dir string, env []string, args ...string) (string, string, error) { //nolint:unparam
+func runGogitEnv(t *testing.T, dir string, env []string, args ...string) (string, string, error) {
 	t.Helper()
 
 	cmd := exec.Command(gogitBin, args...)
