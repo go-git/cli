@@ -101,7 +101,7 @@ func (f *File) Values(key Key) []string {
 	var out []string
 
 	for _, o := range f.options {
-		if o.key.matches(key) {
+		if o.key.Matches(key) {
 			out = append(out, o.value)
 		}
 	}
@@ -126,7 +126,7 @@ func (f *File) Set(key Key, value string) error {
 	var found []*optionRec
 
 	for _, o := range f.options {
-		if o.key.matches(key) {
+		if o.key.Matches(key) {
 			found = append(found, o)
 		}
 	}
@@ -139,7 +139,7 @@ func (f *File) Set(key Key, value string) error {
 		return f.insert(key, value)
 	}
 
-	return f.rewrite(found[0], value)
+	return f.rewrite(found[0], key, value)
 }
 
 // ReplaceAll collapses every value of key into a single value.
@@ -147,7 +147,7 @@ func (f *File) ReplaceAll(key Key, value string) error {
 	var found []*optionRec
 
 	for _, o := range f.options {
-		if o.key.matches(key) {
+		if o.key.Matches(key) {
 			found = append(found, o)
 		}
 	}
@@ -156,12 +156,12 @@ func (f *File) ReplaceAll(key Key, value string) error {
 	case 0:
 		return f.insert(key, value)
 	case 1:
-		return f.rewrite(found[0], value)
+		return f.rewrite(found[0], key, value)
 	}
 
 	// Keep the first occurrence in place and drop the rest, so the value
 	// stays where the file already had it.
-	edits := []edit{{start: found[0].valueStart, end: found[0].logicalEnd, text: encodeValue(value)}}
+	edits := []edit{f.writeEdit(found[0], key, value)}
 	for _, o := range found[1:] {
 		edits = append(edits, deleteEdit(o))
 	}
@@ -182,7 +182,7 @@ func (f *File) UnsetAll(key Key) (int, error) {
 	)
 
 	for _, o := range f.options {
-		if o.key.matches(key) {
+		if o.key.Matches(key) {
 			edits = append(edits, deleteEdit(o))
 			n++
 		}
@@ -252,29 +252,25 @@ func isSpace(c byte) bool {
 	return c == ' ' || c == '\t' || c == '\r' || c == '\n'
 }
 
-func (f *File) rewrite(o *optionRec, value string) error {
+func (f *File) rewrite(o *optionRec, key Key, value string) error {
+	return f.apply([]edit{f.writeEdit(o, key, value)})
+}
+
+// writeEdit returns the splice that makes o hold value. git rewrites the whole
+// "name = value" pair using the spelling from the command line, so a variable
+// already in the file can come back differently capitalised.
+func (f *File) writeEdit(o *optionRec, key Key, value string) edit {
+	text := key.Name + " = " + encodeValue(value)
+
 	if !o.alone {
 		// The variable shares its line with its section header. git moves it
 		// onto a line of its own rather than rewriting in place.
-		sec := f.sections[o.secIdx]
-		text := "\n\t" + f.rawName(o) + " = " + encodeValue(value)
-
-		return f.apply([]edit{{start: sec.headerEnd, end: o.logicalEnd, text: text}})
+		return edit{start: f.sections[o.secIdx].headerEnd, end: o.logicalEnd, text: "\n\t" + text}
 	}
 
-	text := encodeValue(value)
-	if o.valueless {
-		// A bare "name" gains its separator along with the value.
-		text = " = " + text
-	}
-
-	return f.apply([]edit{{start: o.valueStart, end: o.logicalEnd, text: text}})
-}
-
-// rawName returns the variable name as spelled in the file, so rewriting a
-// value never silently changes the name's capitalisation.
-func (f *File) rawName(o *optionRec) string {
-	return string(f.data[o.nameEnd-len(o.key.Name) : o.nameEnd])
+	// Start at the name rather than the value, so the leading indentation is
+	// kept but the old spelling is not.
+	return edit{start: o.nameEnd - len(o.key.Name), end: o.logicalEnd, text: text}
 }
 
 // insert places a new variable after the last variable of the section it
@@ -283,9 +279,7 @@ func (f *File) insert(key Key, value string) error {
 	line := "\t" + key.Name + " = " + encodeValue(value) + "\n"
 
 	for _, s := range slices.Backward(f.sections) {
-		if s.key.Section == key.Section &&
-			s.key.HasSubsection == key.HasSubsection &&
-			s.key.Subsection == key.Subsection {
+		if s.key.sameSection(key) {
 			text := line
 			if s.entryEnd > 0 && f.data[s.entryEnd-1] != '\n' {
 				// The section is the last line and lacks a terminator.

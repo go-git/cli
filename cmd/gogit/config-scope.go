@@ -52,7 +52,7 @@ func (s configSource) values(key gitconfig.Key) []string {
 	var out []string
 
 	for _, o := range s.overrides {
-		if o.key == key {
+		if o.key.Matches(key) {
 			out = append(out, o.value)
 		}
 	}

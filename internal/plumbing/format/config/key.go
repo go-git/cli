@@ -11,18 +11,23 @@ package config
 import "strings"
 
 // Key is a parsed configuration key such as "remote.origin.url".
+//
+// Every field holds the spelling it was given, because git writes a variable
+// using the spelling from the command line rather than folding it. Matching,
+// by contrast, ignores case for section and variable names, so compare keys
+// with Matches and never with ==.
 type Key struct {
-	// Section is the section name, lower-cased. Section names are
-	// case-insensitive in Git.
+	// Section is the section name as spelled. Section names match
+	// case-insensitively in Git.
 	Section string
-	// Subsection is the subsection name, preserved verbatim. Subsection
-	// names are case-sensitive in Git.
+	// Subsection is the subsection name. Subsection names match
+	// case-sensitively in Git.
 	Subsection string
 	// HasSubsection distinguishes "user..name", which addresses the empty
 	// subsection [user ""], from "user.name", which addresses [user].
 	HasSubsection bool
-	// Name is the variable name, lower-cased. Variable names are
-	// case-insensitive in Git.
+	// Name is the variable name as spelled. Variable names match
+	// case-insensitively in Git.
 	Name string
 }
 
@@ -68,8 +73,8 @@ func ParseKey(key string) (Key, error) {
 	}
 
 	k := Key{
-		Section: strings.ToLower(key[:first]),
-		Name:    strings.ToLower(key[last+1:]),
+		Section: key[:first],
+		Name:    key[last+1:],
 	}
 
 	if first != last {
@@ -93,12 +98,16 @@ func (k Key) String() string {
 	return k.Section + "." + k.Name
 }
 
-// matches reports whether k addresses the same variable as other. Section and
-// variable names compare case-insensitively (both are stored lower-cased);
-// subsection names compare byte-for-byte.
-func (k Key) matches(other Key) bool {
-	return k.Section == other.Section &&
-		k.Name == other.Name &&
+// Matches reports whether k addresses the same variable as other. Section and
+// variable names compare case-insensitively; subsection names compare
+// byte-for-byte, and an empty subsection is distinct from none at all.
+func (k Key) Matches(other Key) bool {
+	return k.sameSection(other) && strings.EqualFold(k.Name, other.Name)
+}
+
+// sameSection reports whether both keys address the same section header.
+func (k Key) sameSection(other Key) bool {
+	return strings.EqualFold(k.Section, other.Section) &&
 		k.HasSubsection == other.HasSubsection &&
 		k.Subsection == other.Subsection
 }

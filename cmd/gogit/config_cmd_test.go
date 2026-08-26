@@ -114,6 +114,7 @@ const (
 	valAuthor  = "A U Thor\n"
 	valThree   = "three"
 	keyPathDir = "p.dir"
+	keyMixed   = "Section.Movie"
 	valNewName = "New Name"
 	overridePr = "pr.k=CMD"
 )
@@ -839,5 +840,97 @@ func assertDiagnostic(t *testing.T, stderr string, code int, want string) {
 
 	if stderr != want {
 		t.Fatalf("stderr = %q, want %q", stderr, want)
+	}
+}
+
+// TestConfigPreservesKeySpelling covers the command level of git's rule that a
+// variable is written with the spelling given on the command line. Upstream's
+// t1300-config.sh gates on this at its "mixed case" case.
+func TestConfigPreservesKeySpelling(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		src  string
+		args []string
+		want string
+	}{
+		{
+			name: "new variable in an existing section",
+			src:  "[section]\n\tpenguin = little blue\n",
+			args: []string{cmdConfig, subSet, keyMixed, "BadPhysics"},
+			want: "[section]\n\tpenguin = little blue\n\tMovie = BadPhysics\n",
+		},
+		{
+			name: "legacy implicit set",
+			src:  "[section]\n\tpenguin = little blue\n",
+			args: []string{cmdConfig, keyMixed, "BadPhysics"},
+			want: "[section]\n\tpenguin = little blue\n\tMovie = BadPhysics\n",
+		},
+		{
+			name: "rewriting replaces the old spelling",
+			src:  "[section]\n\tMovie = old\n",
+			args: []string{cmdConfig, subSet, "Section.MOVIE", "new"},
+			want: "[section]\n\tMOVIE = new\n",
+		},
+		{
+			name: "a new section takes the command-line spelling",
+			src:  "",
+			args: []string{cmdConfig, subSet, "Core.MyVar", "V"},
+			want: "[Core]\n\tMyVar = V\n",
+		},
+		{
+			name: "--add keeps the command-line spelling",
+			src:  "[core]\n\tx = 1\n",
+			args: []string{cmdConfig, flagAdd, "Core.MyVar", "V"},
+			want: "[core]\n\tx = 1\n\tMyVar = V\n",
+		},
+		{
+			name: "a new subsection keeps every part's spelling",
+			src:  "",
+			args: []string{cmdConfig, subSet, "Remote.Origin.URL", "u"},
+			want: "[Remote \"Origin\"]\n\tURL = u\n",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			repo, home := newConfigRepo(t, tc.src)
+			path := filepath.Join(repo, ".git", "config")
+
+			if _, stderr, code := runConfig(t, repo, home, tc.args...); code != 0 {
+				t.Fatalf("gogit %v: exit %d, stderr %q", tc.args, code, stderr)
+			}
+
+			if got := readFileString(t, path); got != tc.want {
+				t.Fatalf("gogit %v:\n--- got ---\n%s\n--- want ---\n%s", tc.args, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestConfigLookupIgnoresCase confirms reads still fold section and variable
+// names while keeping subsection names case-sensitive.
+func TestConfigLookupIgnoresCase(t *testing.T) {
+	t.Parallel()
+
+	repo, home := newConfigRepo(t, "[Section]\n\tMovie = BadPhysics\n[remote \"Origin\"]\n\tURL = u\n")
+
+	for _, key := range []string{"section.movie", "SECTION.MOVIE", keyMixed} {
+		stdout, _, code := runConfig(t, repo, home, cmdConfig, subGet, key)
+		if code != 0 || stdout != "BadPhysics\n" {
+			t.Errorf("get %s: exit %d, stdout %q", key, code, stdout)
+		}
+	}
+
+	if stdout, _, code := runConfig(t, repo, home, cmdConfig, subGet, "REMOTE.Origin.URL"); code != 0 || stdout != "u\n" {
+		t.Errorf("get REMOTE.Origin.URL: exit %d, stdout %q", code, stdout)
+	}
+
+	// The subsection is the one part that stays case-sensitive.
+	if _, _, code := runConfig(t, repo, home, cmdConfig, subGet, "remote.origin.url"); code != 1 {
+		t.Errorf("subsection lookup should be case-sensitive: exit %d, want 1", code)
 	}
 }

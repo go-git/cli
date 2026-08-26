@@ -96,7 +96,7 @@ func (p *parser) parseHeader(lineStart int) error {
 			return p.err()
 		}
 
-		key = Key{Section: strings.ToLower(name), Subsection: sub, HasSubsection: true}
+		key = Key{Section: name, Subsection: sub, HasSubsection: true}
 	case strings.Contains(name, "."):
 		// Deprecated "[section.subsection]" form. Git lower-cases the whole
 		// header, so the subsection is case-insensitive here only.
@@ -106,7 +106,9 @@ func (p *parser) parseHeader(lineStart int) error {
 		}
 
 		key = Key{
-			Section:       strings.ToLower(sec),
+			Section: sec,
+			// Git folds the whole "[section.subsection]" header, so only in
+			// this deprecated form is the subsection case-insensitive.
 			Subsection:    strings.ToLower(sub),
 			HasSubsection: true,
 		}
@@ -115,7 +117,7 @@ func (p *parser) parseHeader(lineStart int) error {
 			return p.err()
 		}
 
-		key = Key{Section: strings.ToLower(name)}
+		key = Key{Section: name}
 	}
 
 	p.skipBlank()
@@ -185,7 +187,7 @@ func (p *parser) parseVariable(lineStart int, alone bool) error {
 		p.pos++
 	}
 
-	name := strings.ToLower(string(p.data[nameStart:p.pos]))
+	name := string(p.data[nameStart:p.pos])
 	if !validVariableName(name) {
 		return p.err()
 	}

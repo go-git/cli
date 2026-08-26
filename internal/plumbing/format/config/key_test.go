@@ -19,6 +19,9 @@ const (
 	keyOriginURL = "remote.origin.url"
 	keyDottedSub = "remote.team.one.url"
 
+	keyUpperName = "USER.NAME"
+	keyMixedSub  = "remote.Origin.url"
+
 	valPlain = "plain"
 )
 
@@ -53,13 +56,13 @@ func TestParseKey(t *testing.T) {
 			want: config.Key{Section: secUser, Subsection: "", HasSubsection: true, Name: varName},
 		},
 		{
-			name: "section and variable are lower-cased",
-			in:   "USER.NAME",
-			want: config.Key{Section: secUser, Name: varName},
+			name: "spelling is preserved, not folded",
+			in:   keyUpperName,
+			want: config.Key{Section: "USER", Name: "NAME"},
 		},
 		{
 			name: "subsection keeps its case",
-			in:   "remote.Origin.url",
+			in:   keyMixedSub,
 			want: config.Key{Section: secRemote, Subsection: "Origin", HasSubsection: true, Name: varURL},
 		},
 		{
@@ -145,6 +148,53 @@ func TestKeyString(t *testing.T) {
 
 			if got := k.String(); got != in {
 				t.Fatalf("Key.String() = %q, want %q", got, in)
+			}
+		})
+	}
+}
+
+// TestKeyMatches pins the comparison rules: section and variable names fold,
+// subsection names do not, and an empty subsection is its own thing. Keys must
+// never be compared with ==, which would make these all unequal.
+func TestKeyMatches(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		a, b string
+		want bool
+	}{
+		{name: "identical", a: keyUserName, b: keyUserName, want: true},
+		{name: "section folds", a: "USER.name", b: keyUserName, want: true},
+		{name: "variable folds", a: "user.NAME", b: keyUserName, want: true},
+		{name: "both fold", a: keyUpperName, b: keyUserName, want: true},
+		{name: "subsection does not fold", a: keyMixedSub, b: keyOriginURL, want: false},
+		{name: "subsection section folds", a: "REMOTE.origin.url", b: keyOriginURL, want: true},
+		{name: "empty subsection is not no subsection", a: keyEmptySub, b: keyUserName, want: false},
+		{name: "different variable", a: "user.email", b: keyUserName, want: false},
+		{name: "different section", a: "core.name", b: keyUserName, want: false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			a, err := config.ParseKey(tc.a)
+			if err != nil {
+				t.Fatalf("ParseKey(%q): %v", tc.a, err)
+			}
+
+			b, err := config.ParseKey(tc.b)
+			if err != nil {
+				t.Fatalf("ParseKey(%q): %v", tc.b, err)
+			}
+
+			if got := a.Matches(b); got != tc.want {
+				t.Fatalf("%q.Matches(%q) = %v, want %v", tc.a, tc.b, got, tc.want)
+			}
+
+			if got := b.Matches(a); got != tc.want {
+				t.Fatalf("Matches is not symmetric for %q and %q", tc.a, tc.b)
 			}
 		})
 	}

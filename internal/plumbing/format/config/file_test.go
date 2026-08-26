@@ -68,7 +68,7 @@ func TestValues(t *testing.T) {
 		want []string
 	}{
 		{name: "simple", key: keyUserName, want: []string{"A U Thor"}},
-		{name: "case-insensitive key", key: "USER.NAME", want: []string{"A U Thor"}},
+		{name: "case-insensitive key", key: keyUpperName, want: []string{"A U Thor"}},
 		{name: "subsection", key: keyOriginURL, want: []string{"https://example.com/x.git"}},
 		{name: "subsection with dots", key: keyDottedSub, want: []string{"https://t.example/o.git"}},
 		{name: "empty subsection", key: keyEmptySub, want: []string{"EMPTYSUB"}},
@@ -406,5 +406,155 @@ func TestWriteFileIsAtomicAndKeepsMode(t *testing.T) {
 
 	if len(entries) != 1 {
 		t.Fatalf("WriteFile left temp files behind: %v", entries)
+	}
+}
+
+// TestWritesUseTheGivenSpelling pins git's rule that a variable is written
+// with the spelling supplied by the caller, not folded and not taken from the
+// file. Existing section headers keep their own spelling; a newly created one
+// takes the caller's.
+func TestWritesUseTheGivenSpelling(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		src  string
+		do   func(*testing.T, *config.File)
+		want string
+	}{
+		{
+			name: "new variable in an existing section",
+			src:  "[section]\n\tpenguin = little blue\n",
+			do: func(t *testing.T, f *config.File) {
+				t.Helper()
+
+				if err := f.Set(mustKey(t, "Section.Movie"), "BadPhysics"); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "[section]\n\tpenguin = little blue\n\tMovie = BadPhysics\n",
+		},
+		{
+			name: "an existing header is never re-cased",
+			src:  "[Section]\n\tpenguin = x\n",
+			do: func(t *testing.T, f *config.File) {
+				t.Helper()
+
+				if err := f.Set(mustKey(t, "section.movie"), "Y"); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "[Section]\n\tpenguin = x\n\tmovie = Y\n",
+		},
+		{
+			name: "rewriting replaces the old spelling",
+			src:  "[section]\n\tMovie = old\n",
+			do: func(t *testing.T, f *config.File) {
+				t.Helper()
+
+				if err := f.Set(mustKey(t, "Section.MOVIE"), "new"); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "[section]\n\tMOVIE = new\n",
+		},
+		{
+			name: "a new section takes the caller's spelling",
+			src:  "",
+			do: func(t *testing.T, f *config.File) {
+				t.Helper()
+
+				if err := f.Set(mustKey(t, "Core.MyVar"), "V"); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "[Core]\n\tMyVar = V\n",
+		},
+		{
+			name: "a new subsection keeps every part's spelling",
+			src:  "",
+			do: func(t *testing.T, f *config.File) {
+				t.Helper()
+
+				if err := f.Set(mustKey(t, "Remote.Origin.URL"), "u"); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "[Remote \"Origin\"]\n\tURL = u\n",
+		},
+		{
+			name: "add uses the caller's spelling",
+			src:  "[core]\n\tx = 1\n",
+			do: func(t *testing.T, f *config.File) {
+				t.Helper()
+
+				if err := f.Add(mustKey(t, "Core.MyVar"), "V"); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "[core]\n\tx = 1\n\tMyVar = V\n",
+		},
+		{
+			name: "replace-all uses the caller's spelling",
+			src:  "[core]\n\tmyvar = 1\n\tmyvar = 2\n",
+			do: func(t *testing.T, f *config.File) {
+				t.Helper()
+
+				if err := f.ReplaceAll(mustKey(t, "Core.MyVar"), "V"); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "[core]\n\tMyVar = V\n",
+		},
+		{
+			name: "a valueless variable gains a value and the new spelling",
+			src:  "[a]\n\tFlag\n",
+			do: func(t *testing.T, f *config.File) {
+				t.Helper()
+
+				if err := f.Set(mustKey(t, "A.FLAG"), "yes"); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "[a]\n\tFLAG = yes\n",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			f := mustParse(t, tc.src)
+			tc.do(t, f)
+
+			if got := string(f.Bytes()); got != tc.want {
+				t.Fatalf("--- got ---\n%s\n--- want ---\n%s", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestLookupIgnoresCase confirms that changing the model to carry spelling did
+// not make lookups case-sensitive.
+func TestLookupIgnoresCase(t *testing.T) {
+	t.Parallel()
+
+	f := mustParse(t, "[Section]\n\tMovie = BadPhysics\n[remote \"Origin\"]\n\tURL = u\n")
+
+	for _, key := range []string{"section.movie", "SECTION.MOVIE", "Section.Movie"} {
+		if got, ok := f.Get(mustKey(t, key)); !ok || got != "BadPhysics" {
+			t.Errorf("Get(%q) = (%q, %v), want (BadPhysics, true)", key, got, ok)
+		}
+	}
+
+	for _, key := range []string{keyMixedSub, "REMOTE.Origin.URL"} {
+		if got, ok := f.Get(mustKey(t, key)); !ok || got != "u" {
+			t.Errorf("Get(%q) = (%q, %v), want (u, true)", key, got, ok)
+		}
+	}
+
+	// The subsection is the one part that stays case-sensitive.
+	if _, ok := f.Get(mustKey(t, "remote.origin.url")); ok {
+		t.Error("subsection lookup should be case-sensitive")
 	}
 }
