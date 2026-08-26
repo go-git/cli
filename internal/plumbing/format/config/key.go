@@ -80,6 +80,10 @@ func ParseKey(key string) (Key, error) {
 	if first != last {
 		k.Subsection = key[first+1 : last]
 		k.HasSubsection = true
+
+		if !validSubsectionName(k.Subsection) {
+			return Key{}, &KeyInvalidError{Key: key}
+		}
 	}
 
 	if !validSectionName(k.Section) || !validVariableName(k.Name) {
@@ -142,6 +146,10 @@ func validVariableName(s string) bool {
 	}
 
 	return true
+}
+
+func validSubsectionName(s string) bool {
+	return !strings.ContainsAny(s, "\x00\n")
 }
 
 func isAlpha(c byte) bool {

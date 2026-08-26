@@ -85,6 +85,8 @@ func TestParseKey(t *testing.T) {
 		{name: "space in variable", in: "a.b c", wantErr: isInvalidKey},
 		{name: "space in section", in: "a b.c", wantErr: isInvalidKey},
 		{name: "leading separator", in: ".b", wantErr: isInvalidKey},
+		{name: "newline in subsection", in: "a.foo\nbar.b", wantErr: isInvalidKey},
+		{name: "NUL in subsection", in: "a.foo\x00bar.b", wantErr: isInvalidKey},
 	}
 
 	for _, tc := range tests {

@@ -77,25 +77,33 @@ func readSources(o *configOpts) ([]configSource, error) {
 		return []configSource{src}, nil
 	}
 
-	var files []configFile
+	sources := make([]configSource, 0)
 
 	if p, ok := systemConfigPath(); ok {
-		files = append(files, absoluteFile(p))
+		src, loaded, err := loadOptionalSource(absoluteFile(p))
+		if err != nil {
+			return nil, err
+		}
+
+		if loaded {
+			sources = append(sources, src)
+		}
 	}
 
 	for _, p := range globalConfigPaths() {
-		files = append(files, absoluteFile(p))
+		src, loaded, err := loadOptionalSource(absoluteFile(p))
+		if err != nil {
+			return nil, err
+		}
+
+		if loaded {
+			sources = append(sources, src)
+		}
 	}
 
 	// Being outside a repository is not an error for a default read: -c
 	// overrides and the global files still apply, as they do in git.
 	if f, err := localConfigFile(); err == nil {
-		files = append(files, f)
-	}
-
-	sources := make([]configSource, 0, len(files)+1)
-
-	for _, f := range files {
 		src, err := loadSource(f)
 		if err != nil {
 			return nil, err
@@ -172,6 +180,22 @@ func loadSource(cf configFile) (configSource, error) {
 	}
 
 	return configSource{file: f}, nil
+}
+
+// loadOptionalSource ignores missing and unreadable system/global files, as
+// git does, but still reports malformed files instead of hiding corruption.
+func loadOptionalSource(cf configFile) (configSource, bool, error) {
+	f, err := gitconfig.ReadFile(cf.path)
+	if err != nil {
+		var perr *gitconfig.ParseError
+		if errors.As(err, &perr) {
+			return configSource{}, false, configReadError(cf, err)
+		}
+
+		return configSource{}, false, nil
+	}
+
+	return configSource{file: f}, true, nil
 }
 
 // globalConfigPaths returns the per-user config files in ascending precedence

@@ -312,9 +312,9 @@ func deleteEdit(o *optionRec) edit {
 		return edit{start: o.lineStart, end: o.lineEnd}
 	}
 
-	// The variable shares its line with a section header; drop just the
-	// variable text and leave the header standing.
-	return edit{start: o.nameEnd - len(o.key.Name), end: o.logicalEnd}
+	// A section header and its only same-line variable are one logical entry to
+	// git's unset operation, so remove the whole physical line.
+	return edit{start: o.lineStart, end: o.lineEnd}
 }
 
 // apply splices edits into the document and re-parses, so recorded offsets

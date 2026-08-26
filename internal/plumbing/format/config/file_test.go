@@ -138,6 +138,8 @@ func TestParseRejectsMalformed(t *testing.T) {
 		{name: "invalid section character", src: "[a_b]\n\tc = d\n", wantLine: 1},
 		{name: "variable starting with a digit", src: "[a]\n\t1b = c\n", wantLine: 2},
 		{name: "junk after a value", src: "[a]\n\tb = c\n\td e f\n", wantLine: 3},
+		{name: "NUL in a value", src: "[a]\n\tb = one\x00two\n", wantLine: 2},
+		{name: "NUL in a subsection", src: "[a \"sub\x00section\"]\n\tb = c\n", wantLine: 1},
 	}
 
 	for _, tc := range tests {

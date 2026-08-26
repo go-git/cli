@@ -543,6 +543,52 @@ func TestConfigFile(t *testing.T) {
 	}
 }
 
+func TestConfigUnsetRemovesSameLineSection(t *testing.T) {
+	t.Parallel()
+
+	base := t.TempDir()
+	home := filepath.Join(base, "home")
+	file := filepath.Join(base, "config")
+
+	mkdirAll(t, home)
+	writeConfig(t, file, "[a] value = old # remove with the value\n[b]\n\tother = kept\n")
+
+	_, stderr, err := runGogitEnv(t, base, configEnv(home), cmdConfig, subUnset, flagFile, file, "a.value")
+	if err != nil {
+		t.Fatalf("unset failed: %v (stderr %q)", err, stderr)
+	}
+
+	if got, want := readFileString(t, file), "[b]\n\tother = kept\n"; got != want {
+		t.Fatalf("config after unset = %q, want %q", got, want)
+	}
+}
+
+func TestConfigIgnoresUnreadableOptionalGlobal(t *testing.T) {
+	t.Parallel()
+
+	base := t.TempDir()
+	home := filepath.Join(base, "home")
+	global := filepath.Join(base, "unreadable-global")
+
+	mkdirAll(t, home)
+
+	if err := os.Mkdir(global, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	env := append(configEnv(home), "GIT_CONFIG_GLOBAL="+global)
+
+	stdout, stderr, err := runGogitEnv(t, base, env, cmdConfig, subGet, "missing.key")
+	if stdout != "" || stderr != "" {
+		t.Fatalf("unreadable optional global produced stdout=%q stderr=%q", stdout, stderr)
+	}
+
+	var ee *exec.ExitError
+	if !errors.As(err, &ee) || ee.ExitCode() != 1 {
+		t.Fatalf("exit error = %v, want status 1", err)
+	}
+}
+
 func TestConfigPath(t *testing.T) {
 	t.Parallel()
 

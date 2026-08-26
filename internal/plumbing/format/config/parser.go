@@ -151,6 +151,10 @@ func (p *parser) parseSubsection() (string, error) {
 		}
 
 		c := p.data[p.pos]
+		if c == 0 {
+			return "", p.err()
+		}
+
 		if c == '"' {
 			p.pos++
 
@@ -251,7 +255,7 @@ func (p *parser) parseVariable(lineStart int, alone bool) error {
 // parseValue reads a variable's value, honouring quoted runs, backslash
 // escapes and backslash-newline continuations, and trimming unquoted trailing
 // whitespace.
-func (p *parser) parseValue() (string, error) {
+func (p *parser) parseValue() (string, error) { //nolint:gocognit // parser state machine
 	var (
 		b        strings.Builder
 		inQuote  bool
@@ -260,6 +264,9 @@ func (p *parser) parseValue() (string, error) {
 
 	for p.pos < len(p.data) {
 		c := p.data[p.pos]
+		if c == 0 {
+			return "", p.err()
+		}
 
 		switch {
 		case c == '\n' || (c == '\r' && p.peekIsLF()):
