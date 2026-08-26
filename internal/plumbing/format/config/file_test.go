@@ -289,6 +289,45 @@ func TestSetRefusesMultipleValues(t *testing.T) {
 	}
 }
 
+func TestReplaceAllUsesLastRepeatedSection(t *testing.T) {
+	t.Parallel()
+
+	f := mustParse(t, "[a]\n\tv = one\n[a]\n\tv = two\n")
+	if err := f.ReplaceAll(mustKey(t, "a.v"), "three"); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, want := string(f.Bytes()), "[a]\n[a]\n\tv = three\n"; got != want {
+		t.Fatalf("ReplaceAll = %q, want %q", got, want)
+	}
+}
+
+func TestUnsetKeepsRepeatedSectionHeadersWhenGroupHasValues(t *testing.T) {
+	t.Parallel()
+
+	f := mustParse(t, "[a]\n\tv = one\n[a]\n\tother = two\n")
+	if _, err := f.UnsetAll(mustKey(t, "a.v")); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, want := string(f.Bytes()), "[a]\n[a]\n\tother = two\n"; got != want {
+		t.Fatalf("UnsetAll = %q, want %q", got, want)
+	}
+}
+
+func TestUnsetRemovesAllEmptyRepeatedSections(t *testing.T) {
+	t.Parallel()
+
+	f := mustParse(t, "[a]\n\tv = one\n[a]\n\tv = two\n")
+	if _, err := f.UnsetAll(mustKey(t, "a.v")); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := string(f.Bytes()); got != "" {
+		t.Fatalf("UnsetAll = %q, want empty file", got)
+	}
+}
+
 func TestUnsetAllReportsMissingKey(t *testing.T) {
 	t.Parallel()
 

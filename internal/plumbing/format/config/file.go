@@ -159,10 +159,10 @@ func (f *File) ReplaceAll(key Key, value string) error {
 		return f.rewrite(found[0], key, value)
 	}
 
-	// Keep the first occurrence in place and drop the rest, so the value
-	// stays where the file already had it.
-	edits := []edit{f.writeEdit(found[0], key, value)}
-	for _, o := range found[1:] {
+	// Git keeps the last matching occurrence in place and drops the earlier
+	// ones, preserving the section ordering around the surviving value.
+	edits := []edit{f.writeEdit(found[len(found)-1], key, value)}
+	for _, o := range found[:len(found)-1] {
 		edits = append(edits, deleteEdit(o))
 	}
 
@@ -203,22 +203,50 @@ func (f *File) emptySectionEdits(deletions []edit) []edit {
 	touched := map[int]bool{}
 
 	for _, o := range f.options {
-		for _, d := range deletions {
-			if o.lineStart >= d.start && o.lineEnd <= d.end {
-				touched[o.secIdx] = true
-			}
+		if isDeletedOption(o, deletions) {
+			touched[o.secIdx] = true
 		}
 	}
 
 	var out []edit
 
+	processed := map[int]bool{}
+
 	for idx := range touched {
-		s := f.sections[idx]
-		if !s.plain {
+		if processed[idx] {
 			continue
 		}
 
-		if remainderIsHeaderOnly(f.data, s, deletions) {
+		var group []int
+
+		for candidate, s := range f.sections {
+			if s.key.sameSection(f.sections[idx].key) {
+				group = append(group, candidate)
+				processed[candidate] = true
+			}
+		}
+
+		if groupHasRemainingOption(f.options, group, deletions) ||
+			groupHasContent(f.data, f.sections, group, deletions) {
+			continue
+		}
+
+		allPlain := true
+
+		for _, candidate := range group {
+			if !f.sections[candidate].plain {
+				allPlain = false
+
+				break
+			}
+		}
+
+		if !allPlain {
+			continue
+		}
+
+		for _, candidate := range group {
+			s := f.sections[candidate]
 			out = append(out, edit{start: s.lineStart, end: s.lineEnd})
 		}
 	}
@@ -226,26 +254,49 @@ func (f *File) emptySectionEdits(deletions []edit) []edit {
 	return out
 }
 
-// remainderIsHeaderOnly reports whether the section's region would contain
-// nothing but its own header line once deletions are applied.
-func remainderIsHeaderOnly(data []byte, s *sectionRec, deletions []edit) bool {
-	for i := s.lineEnd; i < s.regionEnd && i < len(data); i++ {
-		deleted := false
-
-		for _, d := range deletions {
-			if i >= d.start && i < d.end {
-				deleted = true
-
-				break
-			}
-		}
-
-		if !deleted && !isSpace(data[i]) {
-			return false
+func isDeletedOption(o *optionRec, deletions []edit) bool {
+	for _, d := range deletions {
+		if o.lineStart >= d.start && o.lineEnd <= d.end {
+			return true
 		}
 	}
 
-	return true
+	return false
+}
+
+func groupHasRemainingOption(options []*optionRec, group []int, deletions []edit) bool {
+	for _, o := range options {
+		for _, idx := range group {
+			if o.secIdx == idx && !isDeletedOption(o, deletions) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+func groupHasContent(data []byte, sections []*sectionRec, group []int, deletions []edit) bool {
+	for _, idx := range group {
+		s := sections[idx]
+		for i := s.lineEnd; i < s.regionEnd && i < len(data); i++ {
+			deleted := false
+
+			for _, d := range deletions {
+				if i >= d.start && i < d.end {
+					deleted = true
+
+					break
+				}
+			}
+
+			if !deleted && !isSpace(data[i]) {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 func isSpace(c byte) bool {

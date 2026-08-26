@@ -89,7 +89,7 @@ func hasConfigOverride(key string) bool {
 // Lookup order: -c override > defaultVal. Empty-string override means false.
 // repoCfg is accepted for future expansion but not consulted in v1.
 //
-//nolint:unparam // key/repoCfg used by future callers (Task 7+).
+//nolint:unparam // repoCfg is part of the shared config helper contract.
 func configBool(key string, repoCfg *config.Config, defaultVal bool) bool {
 	configOverrideMu.Lock()
 	v, ok := configOverrides[key]
