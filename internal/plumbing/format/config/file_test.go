@@ -450,6 +450,72 @@ func TestWriteFileIsAtomicAndKeepsMode(t *testing.T) {
 	}
 }
 
+func TestWriteFileFollowsConfigSymlink(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	f := mustParse(t, "[a]\n\tb = updated\n")
+
+	t.Run("existing target", func(t *testing.T) {
+		t.Parallel()
+
+		realPath := filepath.Join(dir, "real")
+		linkPath := filepath.Join(dir, "link")
+
+		if err := os.WriteFile(realPath, []byte("[a]\n\tb = old\n"), 0o640); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := os.Symlink("real", linkPath); err != nil {
+			t.Skipf("symbolic links unavailable: %v", err)
+		}
+
+		if err := config.WriteFile(linkPath, f, config.FileMode(linkPath)); err != nil {
+			t.Fatalf("WriteFile: %v", err)
+		}
+
+		if target, err := os.Readlink(linkPath); err != nil || target != "real" {
+			t.Fatalf("link target = %q, %v; want real", target, err)
+		}
+
+		got, err := os.ReadFile(realPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if string(got) != string(f.Bytes()) {
+			t.Fatalf("target contents = %q, want %q", got, f.Bytes())
+		}
+	})
+
+	t.Run("missing target", func(t *testing.T) {
+		t.Parallel()
+
+		linkPath := filepath.Join(dir, "dangling")
+
+		if err := os.Symlink("created", linkPath); err != nil {
+			t.Skipf("symbolic links unavailable: %v", err)
+		}
+
+		if err := config.WriteFile(linkPath, f, config.FileMode(linkPath)); err != nil {
+			t.Fatalf("WriteFile: %v", err)
+		}
+
+		if target, err := os.Readlink(linkPath); err != nil || target != "created" {
+			t.Fatalf("link target = %q, %v; want created", target, err)
+		}
+
+		got, err := os.ReadFile(filepath.Join(dir, "created"))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if string(got) != string(f.Bytes()) {
+			t.Fatalf("target contents = %q, want %q", got, f.Bytes())
+		}
+	})
+}
+
 // TestWritesUseTheGivenSpelling pins git's rule that a variable is written
 // with the spelling supplied by the caller, not folded and not taken from the
 // file. Existing section headers keep their own spelling; a newly created one

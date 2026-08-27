@@ -26,7 +26,12 @@ func ReadFile(path string) (*File, error) {
 // WriteFile replaces path with f's contents atomically, so an interrupted or
 // failing write leaves the original file untouched rather than truncated.
 func WriteFile(path string, f *File, perm os.FileMode) error {
-	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".gogit-*")
+	target, err := resolveWritePath(path)
+	if err != nil {
+		return fmt.Errorf("resolve config path: %w", err)
+	}
+
+	tmp, err := os.CreateTemp(filepath.Dir(target), filepath.Base(target)+".gogit-*")
 	if err != nil {
 		return fmt.Errorf("create temp config: %w", err)
 	}
@@ -61,13 +66,55 @@ func WriteFile(path string, f *File, perm os.FileMode) error {
 		return fmt.Errorf("close temp config: %w", err)
 	}
 
-	if err := os.Rename(tmpName, path); err != nil {
+	if err := os.Rename(tmpName, target); err != nil {
 		return fmt.Errorf("replace config: %w", err)
 	}
 
 	renamed = true
 
 	return nil
+}
+
+func resolveWritePath(path string) (string, error) {
+	current, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+
+	seen := map[string]bool{}
+
+	for {
+		current = filepath.Clean(current)
+		if seen[current] {
+			return "", fmt.Errorf("symbolic link loop at %s", current)
+		}
+
+		seen[current] = true
+
+		info, err := os.Lstat(current)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return current, nil
+			}
+
+			return "", err
+		}
+
+		if info.Mode()&os.ModeSymlink == 0 {
+			return current, nil
+		}
+
+		target, err := os.Readlink(current)
+		if err != nil {
+			return "", err
+		}
+
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(filepath.Dir(current), target)
+		}
+
+		current = target
+	}
 }
 
 // FileMode returns the permissions to give a rewritten config file: the
