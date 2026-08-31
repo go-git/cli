@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/user"
 	"path/filepath"
 	"strings"
 
@@ -188,10 +189,9 @@ func runConfigGet(o *configOpts, rawKey string) error {
 		return err
 	}
 
-	var values []string
-
-	for _, src := range sources {
-		values = append(values, src.values(key)...)
+	values, err := effectiveConfigValues(sources, key)
+	if err != nil {
+		return err
 	}
 
 	if len(values) == 0 {
@@ -237,36 +237,38 @@ func runConfigWrite(o *configOpts, rawKey, value string, mode writeMode) error {
 		return err
 	}
 
-	f, err := gitconfig.ReadFile(target.path)
-	if err != nil {
-		return configReadError(target, err)
-	}
+	err = gitconfig.UpdateFile(target.path, func(f *gitconfig.File) error {
+		switch mode {
+		case writeAdd:
+			return f.Add(key, value)
 
-	switch mode {
-	case writeAdd:
-		err = f.Add(key, value)
+		case writeUnset:
+			if !o.all && len(f.Values(key)) > 1 {
+				fmt.Fprintf(os.Stderr, "warning: %s has multiple values\n", rawKey)
 
-	case writeUnset:
-		if !o.all && len(f.Values(key)) > 1 {
-			fmt.Fprintf(os.Stderr, "warning: %s has multiple values\n", rawKey)
-
-			return &gitExitError{
-				code: exitCannotReplace,
-				msg:  fmt.Sprintf("error: cannot unset multiple values for %s; use --all", rawKey),
+				return &gitExitError{
+					code: exitCannotReplace,
+					msg:  fmt.Sprintf("error: cannot unset multiple values for %s; use --all", rawKey),
+				}
 			}
-		}
 
-		var n int
+			n, err := f.UnsetAll(key)
+			if err == nil && n == 0 {
+				return &gitExitError{code: exitUnsetMissing}
+			}
 
-		if n, err = f.UnsetAll(key); err == nil && n == 0 {
-			// git exits 5 without a diagnostic; test_unconfig relies on it.
-			return &gitExitError{code: exitUnsetMissing}
-		}
+			return err
 
-	case writeSet:
-		if o.all {
-			err = f.ReplaceAll(key, value)
-		} else if err = f.Set(key, value); errors.Is(err, gitconfig.ErrMultipleValues) {
+		case writeSet:
+			if o.all {
+				return f.ReplaceAll(key, value)
+			}
+
+			err := f.Set(key, value)
+			if !errors.Is(err, gitconfig.ErrMultipleValues) {
+				return err
+			}
+
 			fmt.Fprintf(os.Stderr, "warning: %s has multiple values\n", rawKey)
 
 			return &gitExitError{
@@ -275,13 +277,14 @@ func runConfigWrite(o *configOpts, rawKey, value string, mode writeMode) error {
 					"       Use --add or --all to change %s.", rawKey),
 			}
 		}
-	}
 
+		return nil
+	})
 	if err != nil {
-		return err
+		return configReadError(target, err)
 	}
 
-	return gitconfig.WriteFile(target.path, f, gitconfig.FileMode(target.path))
+	return nil
 }
 
 // parseConfigKey converts Git's key diagnostics into exit-1 errors.
@@ -313,25 +316,36 @@ func usageError(msg string) error {
 // expandPath applies --path canonicalization: a leading ~ becomes the user's
 // home directory. Any other value is returned unchanged.
 func expandPath(v string) (string, error) {
-	if v != "~" && !strings.HasPrefix(v, "~/") {
-		if strings.HasPrefix(v, "~") {
-			return "", &gitExitError{
-				code: exitFatal,
-				msg:  fmt.Sprintf("fatal: failed to expand user dir in: '%s'", v),
-			}
-		}
-
+	if !strings.HasPrefix(v, "~") {
 		return v, nil
 	}
 
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
+	if v == "~" || strings.HasPrefix(v, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+
+		if v == "~" {
+			return home, nil
+		}
+
+		return filepath.Join(home, v[2:]), nil
 	}
 
-	if v == "~" {
-		return home, nil
+	name, suffix, _ := strings.Cut(v[1:], "/")
+
+	account, err := user.Lookup(name)
+	if err == nil && account.HomeDir != "" {
+		if suffix == "" {
+			return account.HomeDir, nil
+		}
+
+		return filepath.Join(account.HomeDir, suffix), nil
 	}
 
-	return filepath.Join(home, v[2:]), nil
+	return "", &gitExitError{
+		code: exitFatal,
+		msg:  fmt.Sprintf("fatal: failed to expand user dir in: '%s'", v),
+	}
 }

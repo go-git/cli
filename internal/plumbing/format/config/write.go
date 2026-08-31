@@ -23,54 +23,65 @@ func ReadFile(path string) (*File, error) {
 	return Parse(data)
 }
 
-// WriteFile replaces path with f's contents atomically, so an interrupted or
-// failing write leaves the original file untouched rather than truncated.
-func WriteFile(path string, f *File, perm os.FileMode) error {
+// UpdateFile applies mutate while holding the config lock and atomically
+// replaces path. The lock covers the read as well as the write, preventing two
+// writers from successfully committing stale snapshots over one another.
+func UpdateFile(path string, mutate func(*File) error) error {
 	target, err := resolveWritePath(path)
 	if err != nil {
 		return fmt.Errorf("resolve config path: %w", err)
 	}
 
-	tmp, err := os.CreateTemp(filepath.Dir(target), filepath.Base(target)+".gogit-*")
+	lockPath := target + ".lock"
+
+	lock, err := os.OpenFile(lockPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o666)
 	if err != nil {
-		return fmt.Errorf("create temp config: %w", err)
+		return fmt.Errorf("lock config file %s: %w", path, err)
 	}
 
-	tmpName := tmp.Name()
-	renamed := false
+	committed := false
 
-	// Any path out of this function other than a completed rename leaves the
-	// original file untouched and removes the partial temp file.
 	defer func() {
-		if !renamed {
-			_ = tmp.Close()
-			_ = os.Remove(tmpName)
+		if !committed {
+			_ = lock.Close()
+			_ = os.Remove(lockPath)
 		}
 	}()
 
-	if err := tmp.Chmod(perm); err != nil {
-		return fmt.Errorf("chmod temp config: %w", err)
+	f, err := ReadFile(target)
+	if err != nil {
+		return err
 	}
 
-	if _, err := tmp.Write(f.Bytes()); err != nil {
-		return fmt.Errorf("write temp config: %w", err)
+	if err := mutate(f); err != nil {
+		return err
 	}
 
-	if err := tmp.Sync(); err != nil {
-		return fmt.Errorf("sync temp config: %w", err)
+	if st, err := os.Stat(target); err == nil {
+		if err := lock.Chmod(st.Mode().Perm()); err != nil {
+			return fmt.Errorf("chmod config lock: %w", err)
+		}
+	} else if !os.IsNotExist(err) {
+		return err
 	}
 
-	// Close before rename, and report the error: a deferred Close would hide
-	// write failures that only surface on flush.
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close temp config: %w", err)
+	if _, err := lock.Write(f.Bytes()); err != nil {
+		return fmt.Errorf("write config lock: %w", err)
 	}
 
-	if err := os.Rename(tmpName, target); err != nil {
+	if err := lock.Sync(); err != nil {
+		return fmt.Errorf("sync config lock: %w", err)
+	}
+
+	if err := lock.Close(); err != nil {
+		return fmt.Errorf("close config lock: %w", err)
+	}
+
+	if err := os.Rename(lockPath, target); err != nil {
 		return fmt.Errorf("replace config: %w", err)
 	}
 
-	renamed = true
+	committed = true
 
 	return nil
 }
@@ -115,15 +126,4 @@ func resolveWritePath(path string) (string, error) {
 
 		current = target
 	}
-}
-
-// FileMode returns the permissions to give a rewritten config file: the
-// existing file's mode, or 0o666 for a new one, so an existing file's
-// permissions survive the rename.
-func FileMode(path string) os.FileMode {
-	if st, err := os.Stat(path); err == nil {
-		return st.Mode().Perm()
-	}
-
-	return 0o666
 }

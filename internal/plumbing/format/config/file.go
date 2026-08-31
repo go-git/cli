@@ -28,6 +28,13 @@ type File struct {
 	options  []*optionRec
 }
 
+// Entry is one configuration variable in file order.
+type Entry struct {
+	Key      Key
+	Value    string
+	Implicit bool
+}
+
 // sectionRec is one occurrence of a section header in the file. The same
 // section may be opened more than once.
 type sectionRec struct {
@@ -92,6 +99,16 @@ func Parse(data []byte) (*File, error) {
 // Bytes returns the current file contents.
 func (f *File) Bytes() []byte {
 	return f.data
+}
+
+// Entries returns the variables in their original file order.
+func (f *File) Entries() []Entry {
+	entries := make([]Entry, 0, len(f.options))
+	for _, o := range f.options {
+		entries = append(entries, Entry{Key: o.key, Value: o.value, Implicit: o.valueless})
+	}
+
+	return entries
 }
 
 // Values returns every value recorded for key, in file order. A nil result

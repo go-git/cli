@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 
 	gitconfig "github.com/go-git/cli/internal/plumbing/format/config"
@@ -40,41 +42,32 @@ type configFile struct {
 // configSource is one configuration file consulted for a read, or the set of
 // -c command-line overrides.
 type configSource struct {
-	file      *gitconfig.File
+	location configFile
+	file     *gitconfig.File
+
 	overrides []configOverride
-}
-
-func (s configSource) values(key gitconfig.Key) []string {
-	if s.file != nil {
-		return s.file.Values(key)
-	}
-
-	var out []string
-
-	for _, o := range s.overrides {
-		if o.key.Matches(key) {
-			out = append(out, o.value)
-		}
-	}
-
-	return out
+	includes  bool
 }
 
 // readSources returns the files to consult, lowest precedence first.
 //
-// A location flag selects exactly one source. Otherwise git's default order
-// applies: system, then the XDG and per-user global files, then the
-// repository, then -c overrides.
+// A location flag limits the sources to one scope. Otherwise git's default
+// precedence applies.
 func readSources(o *configOpts) ([]configSource, error) {
-	if file, ok, err := explicitLocation(o); err != nil {
+	if files, ok, err := explicitReadFiles(o); err != nil {
 		return nil, err
 	} else if ok {
-		src, err := loadSource(file)
-		if err != nil {
-			return nil, err
+		sources := make([]configSource, 0, len(files))
+		for _, file := range files {
+			src, err := loadSource(file)
+			if err != nil {
+				return nil, err
+			}
+
+			sources = append(sources, src)
 		}
 
-		return []configSource{src}, nil
+		return sources, nil
 	}
 
 	sources := make([]configSource, 0)
@@ -86,6 +79,7 @@ func readSources(o *configOpts) ([]configSource, error) {
 		}
 
 		if loaded {
+			src.includes = true
 			sources = append(sources, src)
 		}
 	}
@@ -97,6 +91,7 @@ func readSources(o *configOpts) ([]configSource, error) {
 		}
 
 		if loaded {
+			src.includes = true
 			sources = append(sources, src)
 		}
 	}
@@ -109,7 +104,20 @@ func readSources(o *configOpts) ([]configSource, error) {
 			return nil, err
 		}
 
+		src.includes = true
 		sources = append(sources, src)
+
+		if worktree, enabled, err := worktreeConfigFile(src.file); err != nil {
+			return nil, err
+		} else if enabled {
+			worktreeSource, err := loadSource(worktree)
+			if err != nil {
+				return nil, err
+			}
+
+			worktreeSource.includes = true
+			sources = append(sources, worktreeSource)
+		}
 	}
 
 	return append(sources, configSource{overrides: configOverrideList}), nil
@@ -124,7 +132,7 @@ func absoluteFile(path string) configFile {
 // writeTarget returns the single file a mutation applies to. Writes default
 // to the repository config, never to the merged view.
 func writeTarget(o *configOpts) (configFile, error) {
-	if file, ok, err := explicitLocation(o); err != nil {
+	if file, ok, err := explicitWriteLocation(o); err != nil {
 		return configFile{}, err
 	} else if ok {
 		return file, nil
@@ -133,13 +141,42 @@ func writeTarget(o *configOpts) (configFile, error) {
 	return localConfigFile()
 }
 
-// explicitLocation resolves --file/--local/--global/--system. For --global it
-// picks the file git would write to: the XDG file when it already exists,
-// otherwise ~/.gitconfig.
-func explicitLocation(o *configOpts) (configFile, bool, error) {
+func explicitReadFiles(o *configOpts) ([]configFile, bool, error) {
 	switch {
 	case o.file != "":
-		// git reports --file exactly as it was spelled on the command line.
+		return []configFile{absoluteFile(o.file)}, true, nil
+
+	case o.local:
+		f, err := localConfigFile()
+
+		return []configFile{f}, true, err
+
+	case o.global:
+		paths := globalConfigPaths()
+
+		files := make([]configFile, 0, len(paths))
+		for _, path := range paths {
+			files = append(files, absoluteFile(path))
+		}
+
+		return files, true, nil
+
+	case o.system:
+		p, ok := systemConfigPath()
+		if !ok {
+			return nil, true, errors.New("system config is disabled by GIT_CONFIG_NOSYSTEM")
+		}
+
+		return []configFile{absoluteFile(p)}, true, nil
+	}
+
+	return nil, false, nil
+}
+
+// explicitWriteLocation resolves the single file changed by an explicit scope.
+func explicitWriteLocation(o *configOpts) (configFile, bool, error) {
+	switch {
+	case o.file != "":
 		return absoluteFile(o.file), true, nil
 
 	case o.local:
@@ -149,9 +186,9 @@ func explicitLocation(o *configOpts) (configFile, bool, error) {
 
 	case o.global:
 		paths := globalConfigPaths()
-		for _, p := range paths {
-			if _, err := os.Stat(p); err == nil {
-				return absoluteFile(p), true, nil
+		for _, path := range slices.Backward(paths) {
+			if _, err := os.Stat(path); err == nil {
+				return absoluteFile(path), true, nil
 			}
 		}
 
@@ -179,7 +216,7 @@ func loadSource(cf configFile) (configSource, error) {
 		return configSource{}, configReadError(cf, err)
 	}
 
-	return configSource{file: f}, nil
+	return configSource{location: cf, file: f}, nil
 }
 
 // loadOptionalSource ignores missing and unreadable system/global files, as
@@ -195,7 +232,7 @@ func loadOptionalSource(cf configFile) (configSource, bool, error) {
 		return configSource{}, false, nil
 	}
 
-	return configSource{file: f}, true, nil
+	return configSource{location: cf, file: f}, true, nil
 }
 
 // globalConfigPaths returns the per-user config files in ascending precedence
@@ -227,7 +264,7 @@ func globalConfigPaths() []string {
 // systemConfigPath reports the system config file, and whether the system
 // scope is enabled at all.
 func systemConfigPath() (string, bool) {
-	if v := os.Getenv("GIT_CONFIG_NOSYSTEM"); v != "" && v != "0" {
+	if gitEnvBool(os.Getenv("GIT_CONFIG_NOSYSTEM")) {
 		return "", false
 	}
 
@@ -240,6 +277,15 @@ func systemConfigPath() (string, bool) {
 	}
 
 	return "/etc/gitconfig", true
+}
+
+func gitEnvBool(value string) bool {
+	switch strings.ToLower(value) {
+	case "", "0", "false", "no", "off":
+		return false
+	default:
+		return true
+	}
 }
 
 // localConfigFile returns the repository's config file. For a linked worktree
@@ -263,6 +309,46 @@ func localConfigFile() (configFile, error) {
 		// config "./config", which filepath.Join would clean to "config".
 		display: display + "/config",
 	}, nil
+}
+
+func worktreeConfigFile(local *gitconfig.File) (configFile, bool, error) {
+	enabled := false
+
+	key := gitconfig.Key{Section: "extensions", Name: "worktreeConfig"}
+	for _, entry := range local.Entries() {
+		if entry.Key.Matches(key) {
+			enabled = gitBool(entry.Value, entry.Implicit)
+		}
+	}
+
+	if !enabled {
+		return configFile{}, false, nil
+	}
+
+	gitDir, display, err := discoverGitDir()
+	if err != nil {
+		return configFile{}, false, err
+	}
+
+	return configFile{
+		path:    filepath.Join(gitDir, "config.worktree"),
+		display: display + "/config.worktree",
+	}, true, nil
+}
+
+func gitBool(value string, implicit bool) bool {
+	if implicit {
+		return true
+	}
+
+	switch strings.ToLower(value) {
+	case "true", "yes", "on", "1":
+		return true
+	}
+
+	n, err := strconv.ParseInt(value, 10, 64)
+
+	return err == nil && n != 0
 }
 
 // commonGitDir follows a linked worktree's `commondir` pointer back to the

@@ -2,9 +2,12 @@ package config_test
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	config "github.com/go-git/cli/internal/plumbing/format/config"
@@ -406,7 +409,7 @@ func TestReadFileErrorsAreNotEmptyConfigs(t *testing.T) {
 	}
 }
 
-func TestWriteFileIsAtomicAndKeepsMode(t *testing.T) {
+func TestUpdateFileIsAtomicAndKeepsMode(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -416,10 +419,11 @@ func TestWriteFileIsAtomicAndKeepsMode(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	f := mustParse(t, "[a]\n\tb = d\n")
-
-	if err := config.WriteFile(path, f, config.FileMode(path)); err != nil {
-		t.Fatalf("WriteFile: %v", err)
+	key := mustKey(t, "a.b")
+	if err := config.UpdateFile(path, func(f *config.File) error {
+		return f.Set(key, "d")
+	}); err != nil {
+		t.Fatalf("UpdateFile: %v", err)
 	}
 
 	st, err := os.Stat(path)
@@ -446,15 +450,105 @@ func TestWriteFileIsAtomicAndKeepsMode(t *testing.T) {
 	}
 
 	if len(entries) != 1 {
-		t.Fatalf("WriteFile left temp files behind: %v", entries)
+		t.Fatalf("UpdateFile left lock files behind: %v", entries)
 	}
 }
 
-func TestWriteFileFollowsConfigSymlink(t *testing.T) {
+func TestUpdateFileNewFileHonorsCreationMode(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	f := mustParse(t, "[a]\n\tb = updated\n")
+	control := filepath.Join(dir, "control")
+
+	controlFile, err := os.OpenFile(control, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o666)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := controlFile.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	path := filepath.Join(dir, "config")
+
+	key := mustKey(t, "secret.token")
+	if err := config.UpdateFile(path, func(f *config.File) error {
+		return f.Set(key, "value")
+	}); err != nil {
+		t.Fatalf("UpdateFile: %v", err)
+	}
+
+	controlInfo, err := os.Stat(control)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	configInfo, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got, want := configInfo.Mode().Perm(), controlInfo.Mode().Perm(); got != want {
+		t.Fatalf("new config mode = %v, want creation mode %v", got, want)
+	}
+}
+
+func TestUpdateFileConcurrentWritersNeverLoseSuccessfulChanges(t *testing.T) {
+	t.Parallel()
+
+	const writers = 32
+
+	path := filepath.Join(t.TempDir(), "config")
+	start := make(chan struct{})
+
+	keys := make([]config.Key, writers)
+	for i := range writers {
+		keys[i] = mustKey(t, fmt.Sprintf("batch.k%d", i))
+	}
+
+	var (
+		wg        sync.WaitGroup
+		succeeded atomic.Int32
+	)
+
+	for i := range writers {
+		wg.Go(func() {
+			<-start
+
+			if err := config.UpdateFile(path, func(f *config.File) error {
+				return f.Set(keys[i], "value")
+			}); err == nil {
+				succeeded.Add(1)
+			}
+		})
+	}
+
+	close(start)
+	wg.Wait()
+
+	f, err := config.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var stored int
+
+	for _, entry := range f.Entries() {
+		if strings.EqualFold(entry.Key.Section, "batch") {
+			stored++
+		}
+	}
+
+	if got, want := stored, int(succeeded.Load()); got != want {
+		t.Fatalf("stored %d successful writes, want %d", got, want)
+	}
+}
+
+func TestUpdateFileFollowsConfigSymlink(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	key := mustKey(t, "a.b")
 
 	t.Run("existing target", func(t *testing.T) {
 		t.Parallel()
@@ -470,8 +564,10 @@ func TestWriteFileFollowsConfigSymlink(t *testing.T) {
 			t.Skipf("symbolic links unavailable: %v", err)
 		}
 
-		if err := config.WriteFile(linkPath, f, config.FileMode(linkPath)); err != nil {
-			t.Fatalf("WriteFile: %v", err)
+		if err := config.UpdateFile(linkPath, func(f *config.File) error {
+			return f.Set(key, "updated")
+		}); err != nil {
+			t.Fatalf("UpdateFile: %v", err)
 		}
 
 		if target, err := os.Readlink(linkPath); err != nil || target != "real" {
@@ -483,8 +579,8 @@ func TestWriteFileFollowsConfigSymlink(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if string(got) != string(f.Bytes()) {
-			t.Fatalf("target contents = %q, want %q", got, f.Bytes())
+		if want := "[a]\n\tb = updated\n"; string(got) != want {
+			t.Fatalf("target contents = %q, want %q", got, want)
 		}
 	})
 
@@ -497,8 +593,10 @@ func TestWriteFileFollowsConfigSymlink(t *testing.T) {
 			t.Skipf("symbolic links unavailable: %v", err)
 		}
 
-		if err := config.WriteFile(linkPath, f, config.FileMode(linkPath)); err != nil {
-			t.Fatalf("WriteFile: %v", err)
+		if err := config.UpdateFile(linkPath, func(f *config.File) error {
+			return f.Set(key, "updated")
+		}); err != nil {
+			t.Fatalf("UpdateFile: %v", err)
 		}
 
 		if target, err := os.Readlink(linkPath); err != nil || target != "created" {
@@ -510,8 +608,8 @@ func TestWriteFileFollowsConfigSymlink(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if string(got) != string(f.Bytes()) {
-			t.Fatalf("target contents = %q, want %q", got, f.Bytes())
+		if want := "[a]\n\tb = updated\n"; string(got) != want {
+			t.Fatalf("target contents = %q, want %q", got, want)
 		}
 	})
 }

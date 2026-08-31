@@ -2,8 +2,10 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -117,6 +119,7 @@ const (
 	keyMixed   = "Section.Movie"
 	valNewName = "New Name"
 	overridePr = "pr.k=CMD"
+	changedPr  = "[pr]\n\tk = CHANGED\n"
 )
 
 const baseConfig = `[core]
@@ -463,6 +466,69 @@ func TestConfigScopePrecedence(t *testing.T) {
 	}
 }
 
+func TestConfigIncludes(t *testing.T) {
+	t.Parallel()
+
+	repo, home := newConfigRepo(t, "")
+	included := filepath.Join(repo, ".git", "included.cfg")
+	writeConfig(t, included, "[order]\n\tvalue = INCLUDED\n")
+
+	gitDirPattern := filepath.ToSlash(filepath.Join(repo, ".git"))
+	writeConfig(t, filepath.Join(repo, ".git", "config"), fmt.Sprintf(`[order]
+	value = BEFORE
+[include]
+	path = included.cfg
+[includeIf "gitdir:%s"]
+	path = included.cfg
+[includeIf "onbranch:main"]
+	path = included.cfg
+[includeIf "hasconfig:remote.*.url:https://example.com/**"]
+	path = included.cfg
+[remote "origin"]
+	url = https://example.com/repo
+[order]
+	value = AFTER
+`, gitDirPattern))
+
+	stdout, stderr, code := runConfig(t, repo, home, cmdConfig, subGet, flagAll, "order.value")
+	if code != 0 {
+		t.Fatalf("included read: exit %d, stderr %q", code, stderr)
+	}
+
+	if want := "BEFORE\n" + strings.Repeat("INCLUDED\n", 4) + "AFTER\n"; stdout != want {
+		t.Fatalf("included values = %q, want %q", stdout, want)
+	}
+
+	stdout, _, code = runConfig(t, repo, home, cmdConfig, subGet, flagFile,
+		filepath.Join(repo, ".git", "config"), flagAll, "order.value")
+	if code != 0 || stdout != "BEFORE\nAFTER\n" {
+		t.Fatalf("--file should not follow includes by default: exit %d, stdout %q", code, stdout)
+	}
+}
+
+func TestGitWildMatch(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		pattern     string
+		value       string
+		insensitive bool
+		want        bool
+	}{
+		{pattern: "**/group/**", value: "/tmp/group/repo/.git", want: true},
+		{pattern: "feature/**", value: "feature/team/topic", want: true},
+		{pattern: "release/[0-9]?", value: "release/12", want: true},
+		{pattern: "repo", value: "REPO", insensitive: true, want: true},
+		{pattern: "repo", value: "REPO", want: false},
+	}
+
+	for _, test := range tests {
+		if got := gitWildMatch(test.pattern, test.value, test.insensitive); got != test.want {
+			t.Errorf("gitWildMatch(%q, %q) = %v, want %v", test.pattern, test.value, got, test.want)
+		}
+	}
+}
+
 func TestConfigWritesDefaultToLocalScope(t *testing.T) {
 	t.Parallel()
 
@@ -474,7 +540,7 @@ func TestConfigWritesDefaultToLocalScope(t *testing.T) {
 		t.Fatalf("set failed: exit %d, stderr %q", code, stderr)
 	}
 
-	if got, want := readFileString(t, filepath.Join(repo, ".git", cmdConfig)), "[pr]\n\tk = CHANGED\n"; got != want {
+	if got, want := readFileString(t, filepath.Join(repo, ".git", cmdConfig)), changedPr; got != want {
 		t.Fatalf("local config = %q, want %q", got, want)
 	}
 
@@ -494,12 +560,36 @@ func TestConfigGlobalWrite(t *testing.T) {
 		t.Fatalf("set --global failed: exit %d, stderr %q", code, stderr)
 	}
 
-	if got, want := readFileString(t, global), "[pr]\n\tk = CHANGED\n"; got != want {
+	if got, want := readFileString(t, global), changedPr; got != want {
 		t.Fatalf("global config = %q, want %q", got, want)
 	}
 
 	if got, want := readFileString(t, filepath.Join(repo, ".git", cmdConfig)), "[pr]\n\tk = LOCAL\n"; got != want {
 		t.Fatalf("--global write touched the local config: %q", got)
+	}
+}
+
+func TestConfigGlobalPrefersHomeFileOverXDG(t *testing.T) {
+	t.Parallel()
+
+	repo, home := newConfigRepo(t, "")
+	xdg := filepath.Join(home, ".config", "git", "config")
+	global := filepath.Join(home, ".gitconfig")
+
+	mkdirAll(t, filepath.Dir(xdg))
+	writeConfig(t, xdg, "[pr]\n\tk = XDG\n")
+	writeConfig(t, global, "[pr]\n\tk = HOME\n")
+
+	if _, stderr, code := runConfig(t, repo, home, cmdConfig, subSet, flagGlobal, keyPr, "CHANGED"); code != 0 {
+		t.Fatalf("set --global failed: exit %d, stderr %q", code, stderr)
+	}
+
+	if got, want := readFileString(t, global), changedPr; got != want {
+		t.Fatalf("home config = %q, want %q", got, want)
+	}
+
+	if got, want := readFileString(t, xdg), "[pr]\n\tk = XDG\n"; got != want {
+		t.Fatalf("XDG config was modified: got %q, want %q", got, want)
 	}
 }
 
@@ -628,6 +718,50 @@ func TestConfigPath(t *testing.T) {
 	}
 }
 
+func TestConfigPathExpandsExistingUser(t *testing.T) {
+	t.Parallel()
+
+	account, err := user.Current()
+	if err != nil || account.Username == "" || account.HomeDir == "" || strings.Contains(account.Username, "/") {
+		t.Skipf("current user is unavailable for ~user expansion: %v", err)
+	}
+
+	repo, home := newConfigRepo(t, "[p]\n\tdir = ~"+account.Username+"/sub\n")
+
+	stdout, stderr, code := runConfig(t, repo, home, cmdConfig, subGet, flagPath, keyPathDir)
+	if code != 0 {
+		t.Fatalf("--path failed: exit %d, stderr %q", code, stderr)
+	}
+
+	if want := filepath.Join(account.HomeDir, "sub") + "\n"; stdout != want {
+		t.Fatalf("expanded path = %q, want %q", stdout, want)
+	}
+}
+
+func TestConfigNoSystemFalseKeepsSystemScopeEnabled(t *testing.T) {
+	t.Parallel()
+
+	repo, home := newConfigRepo(t, "")
+	system := filepath.Join(t.TempDir(), "system.cfg")
+	writeConfig(t, system, "[scope]\n\tvalue = SYSTEM\n")
+
+	env := []string{
+		"HOME=" + home,
+		"XDG_CONFIG_HOME=",
+		"GIT_CONFIG_NOSYSTEM=false",
+		"GIT_CONFIG_SYSTEM=" + system,
+	}
+
+	stdout, stderr, err := runGogitEnv(t, repo, env, cmdConfig, subGet, "scope.value")
+	if err != nil {
+		t.Fatalf("system read failed: %v (stderr %q)", err, stderr)
+	}
+
+	if stdout != "SYSTEM\n" {
+		t.Fatalf("system value = %q, want SYSTEM", stdout)
+	}
+}
+
 func TestConfigInvalidCombinations(t *testing.T) {
 	t.Parallel()
 
@@ -680,13 +814,15 @@ func TestConfigLinkedWorktree(t *testing.T) {
 	mkdirAll(t, filepath.Join(main, ".git", "refs"))
 
 	writeConfig(t, filepath.Join(main, ".git", "HEAD"), "ref: refs/heads/main\n")
-	writeConfig(t, filepath.Join(main, ".git", cmdConfig), "[user]\n\tname = MAIN\n")
+	writeConfig(t, filepath.Join(main, ".git", cmdConfig),
+		"[extensions]\n\tworktreeConfig = true\n[user]\n\tname = MAIN\n")
 	writeConfig(t, filepath.Join(wt, ".git"), "gitdir: "+wtGitDir+"\n")
 	writeConfig(t, filepath.Join(wtGitDir, "HEAD"), "ref: refs/heads/other\n")
 	writeConfig(t, filepath.Join(wtGitDir, "commondir"), "../..\n")
+	writeConfig(t, filepath.Join(wtGitDir, "config.worktree"), "[user]\n\tname = WORKTREE\n")
 
 	stdout, stderr, code := runConfig(t, wt, home, cmdConfig, subGet, keyUserName)
-	if code != 0 || stdout != "MAIN\n" {
+	if code != 0 || stdout != "WORKTREE\n" {
 		t.Fatalf("worktree read: exit %d, stdout %q, stderr %q", code, stdout, stderr)
 	}
 
@@ -695,7 +831,8 @@ func TestConfigLinkedWorktree(t *testing.T) {
 		t.Fatalf("worktree write: exit %d, stderr %q", code, stderr)
 	}
 
-	if got, want := readFileString(t, filepath.Join(main, ".git", cmdConfig)), "[user]\n\tname = CHANGED\n"; got != want {
+	if got, want := readFileString(t, filepath.Join(main, ".git", cmdConfig)),
+		"[extensions]\n\tworktreeConfig = true\n[user]\n\tname = CHANGED\n"; got != want {
 		t.Fatalf("common config = %q, want %q", got, want)
 	}
 
