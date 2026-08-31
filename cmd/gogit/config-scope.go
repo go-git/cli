@@ -59,8 +59,12 @@ type configSource struct {
 // A location flag limits the sources to one scope. Otherwise git's default
 // precedence applies.
 func readSources(o *configOpts) ([]configSource, error) {
-	if files, ok, err := explicitReadFiles(o); err != nil {
+	if err := validateNoSystem(); err != nil {
 		return nil, err
+	}
+
+	if files, ok, err := explicitReadFiles(o); err != nil {
+		return nil, configRepositoryError(err)
 	} else if ok {
 		sources := make([]configSource, 0, len(files))
 		for _, file := range files {
@@ -103,31 +107,60 @@ func readSources(o *configOpts) ([]configSource, error) {
 		}
 	}
 
-	// Being outside a repository is not an error for a default read: -c
-	// overrides and the global files still apply, as they do in git.
-	if f, err := localConfigFile(); err == nil {
-		src, err := loadSource(f)
+	sources, err := appendLocalConfigSources(sources)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(configOverrideList) > 0 {
+		cwd, err := os.Getwd()
 		if err != nil {
 			return nil, err
 		}
 
-		src.includes = true
-		sources = append(sources, src)
-
-		if worktree, enabled, err := worktreeConfigFile(src.file); err != nil {
-			return nil, err
-		} else if enabled {
-			worktreeSource, err := loadSource(worktree)
-			if err != nil {
-				return nil, err
-			}
-
-			worktreeSource.includes = true
-			sources = append(sources, worktreeSource)
-		}
+		sources = append(sources, configSource{
+			location:  configFile{path: filepath.Join(cwd, ".gitconfig-command-line")},
+			overrides: configOverrideList,
+			includes:  true,
+		})
 	}
 
-	return append(sources, configSource{overrides: configOverrideList}), nil
+	return sources, nil
+}
+
+func appendLocalConfigSources(sources []configSource) ([]configSource, error) {
+	// Being outside a repository is not an error for a default read: -c
+	// overrides and the global files still apply, as they do in git.
+	file, err := localConfigFile()
+	if errors.Is(err, errNoRepository) {
+		return sources, nil
+	}
+
+	if err != nil {
+		return nil, configRepositoryError(err)
+	}
+
+	source, err := loadSource(file)
+	if err != nil {
+		return nil, err
+	}
+
+	source.includes = true
+	sources = append(sources, source)
+
+	worktree, enabled, err := worktreeConfigFile(source.file)
+	if err != nil || !enabled {
+		return sources, err
+	}
+
+	worktreeSource, err := loadSource(worktree)
+	if err != nil {
+		return nil, err
+	}
+
+	worktreeSource.includes = true
+
+	return append(sources, worktreeSource), nil
 }
 
 // absoluteFile names a file that git reports by its full path, which is how
@@ -139,13 +172,32 @@ func absoluteFile(path string) configFile {
 // writeTarget returns the single file a mutation applies to. Writes default
 // to the repository config, never to the merged view.
 func writeTarget(o *configOpts) (configFile, error) {
-	if file, ok, err := explicitWriteLocation(o); err != nil {
+	if err := validateNoSystem(); err != nil {
 		return configFile{}, err
+	}
+
+	if file, ok, err := explicitWriteLocation(o); err != nil {
+		return configFile{}, configRepositoryError(err)
 	} else if ok {
 		return file, nil
 	}
 
-	return localConfigFile()
+	file, err := localConfigFile()
+
+	return file, configRepositoryError(err)
+}
+
+func configRepositoryError(err error) error {
+	if err == nil {
+		return nil
+	}
+
+	var exitErr *gitExitError
+	if errors.As(err, &exitErr) {
+		return err
+	}
+
+	return &gitExitError{code: exitFatal, msg: "fatal: " + err.Error()}
 }
 
 func explicitReadFiles(o *configOpts) ([]configFile, bool, error) {
@@ -304,15 +356,9 @@ func globalConfigPaths() []string {
 // systemConfigPath reports the system config file, and whether the system
 // scope is enabled at all.
 func systemConfigPath() (string, bool, error) {
-	noSystem, valid := gitBool(os.Getenv("GIT_CONFIG_NOSYSTEM"), false)
-	if !valid {
-		return "", false, &gitExitError{
-			code: exitFatal,
-			msg: fmt.Sprintf(
-				"fatal: bad boolean environment value '%s' for 'GIT_CONFIG_NOSYSTEM'",
-				os.Getenv("GIT_CONFIG_NOSYSTEM"),
-			),
-		}
+	noSystem, err := noSystemConfig()
+	if err != nil {
+		return "", false, err
 	}
 
 	if noSystem {
@@ -328,6 +374,29 @@ func systemConfigPath() (string, bool, error) {
 	}
 
 	return defaultSystemConfigPath(), true, nil
+}
+
+func validateNoSystem() error {
+	_, err := noSystemConfig()
+
+	return err
+}
+
+func noSystemConfig() (bool, error) {
+	value := os.Getenv("GIT_CONFIG_NOSYSTEM")
+	noSystem, valid := gitBool(value, false)
+
+	if !valid {
+		return false, &gitExitError{
+			code: exitFatal,
+			msg: fmt.Sprintf(
+				"fatal: bad boolean environment value '%s' for 'GIT_CONFIG_NOSYSTEM'",
+				value,
+			),
+		}
+	}
+
+	return noSystem, nil
 }
 
 func defaultSystemConfigPath() string {

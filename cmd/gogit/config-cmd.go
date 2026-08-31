@@ -60,6 +60,12 @@ func (o *configOpts) registerLocation(cmd *cobra.Command) {
 }
 
 func init() {
+	for _, cmd := range []*cobra.Command{configCmd, configGetCmd, configSetCmd, configUnsetCmd} {
+		cmd.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
+			return usageError(err.Error())
+		})
+	}
+
 	legacyOpts.registerLocation(configCmd)
 	configCmd.Flags().BoolVar(&legacyOpts.path, "path", false,
 		"Canonicalize the value as a path, expanding a leading ~")

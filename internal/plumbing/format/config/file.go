@@ -180,7 +180,7 @@ func (f *File) ReplaceAll(key Key, value string) error {
 	// ones, preserving the section ordering around the surviving value.
 	edits := []edit{f.writeEdit(found[len(found)-1], key, value)}
 	for _, o := range found[:len(found)-1] {
-		edits = append(edits, deleteEdit(o))
+		edits = append(edits, f.deleteEdit(o))
 	}
 
 	return f.apply(edits)
@@ -200,7 +200,7 @@ func (f *File) UnsetAll(key Key) (int, error) {
 
 	for _, o := range f.options {
 		if o.key.Matches(key) {
-			edits = append(edits, deleteEdit(o))
+			edits = append(edits, f.deleteEdit(o))
 			n++
 		}
 	}
@@ -209,7 +209,14 @@ func (f *File) UnsetAll(key Key) (int, error) {
 		return 0, nil
 	}
 
-	return n, f.apply(append(edits, f.emptySectionEdits(edits)...))
+	sectionEdits := f.emptySectionEdits(edits)
+	for _, sectionEdit := range sectionEdits {
+		edits = slices.DeleteFunc(edits, func(e edit) bool {
+			return e.start >= sectionEdit.start && e.end <= sectionEdit.end
+		})
+	}
+
+	return n, f.apply(append(edits, sectionEdits...))
 }
 
 // emptySectionEdits returns the header lines that become empty once edits are
@@ -251,7 +258,7 @@ func (f *File) emptySectionEdits(deletions []edit) []edit {
 		allPlain := true
 
 		for _, candidate := range group {
-			if !f.sections[candidate].plain {
+			if !f.sectionPlainAfterDeletions(candidate, deletions) {
 				allPlain = false
 
 				break
@@ -271,9 +278,25 @@ func (f *File) emptySectionEdits(deletions []edit) []edit {
 	return out
 }
 
+func (f *File) sectionPlainAfterDeletions(section int, deletions []edit) bool {
+	if f.sections[section].plain {
+		return true
+	}
+
+	for _, o := range f.options {
+		if o.secIdx == section && !o.alone {
+			return isDeletedOption(o, deletions)
+		}
+	}
+
+	return false
+}
+
 func isDeletedOption(o *optionRec, deletions []edit) bool {
+	nameStart := o.nameEnd - len(o.key.Name)
+
 	for _, d := range deletions {
-		if o.lineStart >= d.start && o.lineEnd <= d.end {
+		if nameStart >= d.start && o.logicalEnd <= d.end {
 			return true
 		}
 	}
@@ -375,14 +398,12 @@ type edit struct {
 	text       string
 }
 
-func deleteEdit(o *optionRec) edit {
+func (f *File) deleteEdit(o *optionRec) edit {
 	if o.alone {
 		return edit{start: o.lineStart, end: o.lineEnd}
 	}
 
-	// A section header and its only same-line variable are one logical entry to
-	// git's unset operation, so remove the whole physical line.
-	return edit{start: o.lineStart, end: o.lineEnd}
+	return edit{start: f.sections[o.secIdx].headerEnd, end: o.logicalEnd}
 }
 
 // apply splices edits into the document and re-parses, so recorded offsets

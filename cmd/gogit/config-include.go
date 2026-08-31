@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	gitconfig "github.com/go-git/cli/internal/plumbing/format/config"
@@ -53,21 +52,9 @@ func sourceValues(
 	depth int,
 	includedByHasConfig bool,
 ) ([]string, error) {
-	if source.file == nil {
-		var values []string
-
-		for _, override := range source.overrides {
-			if override.key.Matches(key) {
-				values = append(values, override.value)
-			}
-		}
-
-		return values, nil
-	}
-
 	var values []string
 
-	for _, entry := range source.file.Entries() {
+	for _, entry := range sourceEntries(source) {
 		if includedByHasConfig && isRemoteURL(entry.Key) {
 			return nil, &gitExitError{
 				code: exitFatal,
@@ -112,6 +99,21 @@ func sourceValues(
 	}
 
 	return values, nil
+}
+
+func sourceEntries(source configSource) []gitconfig.Entry {
+	if source.file != nil {
+		return source.file.Entries()
+	}
+
+	entries := make([]gitconfig.Entry, 0, len(source.overrides))
+	for _, override := range source.overrides {
+		entries = append(entries, gitconfig.Entry{
+			Key: override.key, Value: override.value, Implicit: override.implicit,
+		})
+	}
+
+	return entries
 }
 
 func includedSource(
@@ -237,77 +239,194 @@ func matchGitDirs(pattern, sourcePath string, gitDirs []string, insensitive bool
 }
 
 func gitWildMatch(pattern, value string, insensitive bool) bool {
-	var expression strings.Builder
-	expression.WriteByte('^')
+	matcher := wildMatcher{
+		pattern:     pattern,
+		value:       value,
+		insensitive: insensitive,
+		memo:        map[wildPosition]bool{},
+	}
 
-	for i := 0; i < len(pattern); {
-		switch pattern[i] {
-		case '*':
-			start := i
-			for i < len(pattern) && pattern[i] == '*' {
-				i++
-			}
+	return matcher.match(0, 0)
+}
 
-			doubleStar := i-start >= 2 && (start == 0 || pattern[start-1] == '/') &&
-				(i == len(pattern) || pattern[i] == '/')
-			if !doubleStar {
-				expression.WriteString("[^/]*")
+type wildPosition struct{ pattern, value int }
 
-				continue
-			}
+type wildMatcher struct {
+	pattern     string
+	value       string
+	insensitive bool
+	memo        map[wildPosition]bool
+}
 
-			if i < len(pattern) {
-				expression.WriteString("(?:.*/)?")
+func (m *wildMatcher) match(patternPos, valuePos int) bool {
+	state := wildPosition{patternPos, valuePos}
+	if matched, ok := m.memo[state]; ok {
+		return matched
+	}
 
-				i++
-			} else {
-				expression.WriteString(".*")
-			}
-		case '?':
-			expression.WriteString("[^/]")
+	matched := m.matchPosition(patternPos, valuePos)
+	m.memo[state] = matched
 
-			i++
-		case '[':
-			end := strings.IndexByte(pattern[i+1:], ']')
-			if end < 0 {
-				expression.WriteString(`\[`)
+	return matched
+}
 
-				i++
+func (m *wildMatcher) matchPosition(patternPos, valuePos int) bool {
+	if patternPos == len(m.pattern) {
+		return valuePos == len(m.value)
+	}
 
-				continue
-			}
+	switch m.pattern[patternPos] {
+	case '*':
+		return m.matchStar(patternPos, valuePos)
+	case '?':
+		return valuePos < len(m.value) && m.value[valuePos] != '/' &&
+			m.match(patternPos+1, valuePos+1)
+	case '[':
+		end, classMatched, ok := matchWildClass(
+			m.pattern, patternPos, m.value, valuePos, m.insensitive,
+		)
+		if ok {
+			return classMatched && m.match(end, valuePos+1)
+		}
+	}
 
-			end += i + 1
-			class := pattern[i+1 : end]
+	return valuePos < len(m.value) &&
+		equalWildByte(m.pattern[patternPos], m.value[valuePos], m.insensitive) &&
+		m.match(patternPos+1, valuePos+1)
+}
 
-			expression.WriteByte('[')
+func (m *wildMatcher) matchStar(patternPos, valuePos int) bool {
+	end := patternPos
+	for end < len(m.pattern) && m.pattern[end] == '*' {
+		end++
+	}
 
-			if strings.HasPrefix(class, "!") {
-				expression.WriteByte('^')
+	doubleStar := end-patternPos >= 2 && (patternPos == 0 || m.pattern[patternPos-1] == '/') &&
+		(end == len(m.pattern) || m.pattern[end] == '/')
+	if doubleStar {
+		return m.matchDoubleStar(end, valuePos)
+	}
 
-				class = class[1:]
-			}
+	for i := valuePos; ; i++ {
+		if m.match(end, i) {
+			return true
+		}
 
-			expression.WriteString(strings.ReplaceAll(class, `\`, `\\`))
-			expression.WriteByte(']')
+		if i == len(m.value) || m.value[i] == '/' {
+			return false
+		}
+	}
+}
 
-			i = end + 1
-		default:
-			expression.WriteString(regexp.QuoteMeta(pattern[i : i+1]))
+func (m *wildMatcher) matchDoubleStar(patternEnd, valuePos int) bool {
+	if patternEnd == len(m.pattern) {
+		return true
+	}
+
+	if m.match(patternEnd+1, valuePos) {
+		return true
+	}
+
+	for i := valuePos; i < len(m.value); i++ {
+		if m.value[i] == '/' && m.match(patternEnd+1, i+1) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func matchWildClass(
+	pattern string,
+	patternPos int,
+	value string,
+	valuePos int,
+	insensitive bool,
+) (int, bool, bool) {
+	if valuePos >= len(value) || value[valuePos] == '/' {
+		return 0, false, false
+	}
+
+	i := patternPos + 1
+	negated := false
+
+	if i < len(pattern) && (pattern[i] == '!' || pattern[i] == '^') {
+		negated = true
+		i++
+	}
+
+	classStart := i
+	if i < len(pattern) && pattern[i] == ']' {
+		i++
+	}
+
+	for i < len(pattern) && pattern[i] != ']' {
+		if pattern[i] == '\\' && i+1 < len(pattern) {
+			i += 2
+		} else {
 			i++
 		}
 	}
 
-	expression.WriteByte('$')
-
-	patternExpression := expression.String()
-	if insensitive {
-		patternExpression = "(?i:" + patternExpression + ")"
+	if i == len(pattern) {
+		return 0, false, false
 	}
 
-	compiled, err := regexp.Compile(patternExpression)
+	matched := wildClassContains(pattern[classStart:i], value[valuePos], insensitive)
+	if negated {
+		matched = !matched
+	}
 
-	return err == nil && compiled.MatchString(value)
+	return i + 1, matched, true
+}
+
+func wildClassContains(class string, value byte, insensitive bool) bool {
+	for i := 0; i < len(class); {
+		start := class[i]
+		if start == '\\' && i+1 < len(class) {
+			i++
+			start = class[i]
+		}
+
+		i++
+
+		if i+1 < len(class) && class[i] == '-' {
+			i++
+
+			end := class[i]
+			if end == '\\' && i+1 < len(class) {
+				i++
+				end = class[i]
+			}
+
+			i++
+
+			candidate := foldWildByte(value, insensitive)
+			if candidate >= foldWildByte(start, insensitive) && candidate <= foldWildByte(end, insensitive) {
+				return true
+			}
+
+			continue
+		}
+
+		if equalWildByte(start, value, insensitive) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func equalWildByte(left, right byte, insensitive bool) bool {
+	return foldWildByte(left, insensitive) == foldWildByte(right, insensitive)
+}
+
+func foldWildByte(value byte, insensitive bool) byte {
+	if insensitive && value >= 'A' && value <= 'Z' {
+		return value + ('a' - 'A')
+	}
+
+	return value
 }
 
 func resolveIncludePath(path, sourcePath string) (string, error) {
@@ -380,21 +499,9 @@ func sourceRemoteURLs(
 	stack map[string]bool,
 	depth int,
 ) ([]string, error) {
-	if source.file == nil {
-		var urls []string
-
-		for _, override := range source.overrides {
-			if isRemoteURL(override.key) {
-				urls = append(urls, override.value)
-			}
-		}
-
-		return urls, nil
-	}
-
 	var urls []string
 
-	for _, entry := range source.file.Entries() {
+	for _, entry := range sourceEntries(source) {
 		if isRemoteURL(entry.Key) {
 			urls = append(urls, entry.Value)
 		}

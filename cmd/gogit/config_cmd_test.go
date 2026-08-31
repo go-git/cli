@@ -11,11 +11,13 @@ import (
 	"testing"
 )
 
+const emptyXDGConfigHome = "XDG_CONFIG_HOME="
+
 // configEnv isolates a test from the developer's real configuration: HOME
 // points at a scratch directory and the system config is switched off, the
 // same way upstream's test-lib.sh does it.
 func configEnv(home string) []string {
-	return []string{"HOME=" + home, "GIT_CONFIG_NOSYSTEM=1", "XDG_CONFIG_HOME="}
+	return []string{"HOME=" + home, "GIT_CONFIG_NOSYSTEM=1", emptyXDGConfigHome}
 }
 
 // runConfig runs gogit in dir and returns stdout, stderr and the exit status.
@@ -445,6 +447,10 @@ func TestConfigScopePrecedence(t *testing.T) {
 			name: "-c can set an empty value",
 			args: []string{"-c", "pr.k=", cmdConfig, subGet, keyPr}, want: "\n",
 		},
+		{
+			name: "-c accepts an implicit boolean",
+			args: []string{"-c", "feature.enabled", cmdConfig, subGet, "feature.enabled"}, want: "\n",
+		},
 	}
 
 	for _, tc := range tests {
@@ -503,6 +509,44 @@ func TestConfigIncludes(t *testing.T) {
 		filepath.Join(repo, ".git", "config"), flagAll, "order.value")
 	if code != 0 || stdout != "BEFORE\nAFTER\n" {
 		t.Fatalf("--file should not follow includes by default: exit %d, stdout %q", code, stdout)
+	}
+}
+
+func TestConfigCommandLineIncludes(t *testing.T) {
+	t.Parallel()
+
+	repo, home := newConfigRepo(t, "")
+	included := filepath.Join(repo, "command-line.cfg")
+	writeConfig(t, included, "[x]\n\ty = from-include\n")
+
+	tests := []struct {
+		name     string
+		override string
+	}{
+		{name: "unconditional", override: "include.path=" + included},
+		{name: "relative to working directory", override: "include.path=command-line.cfg"},
+		{name: "conditional", override: "includeIf.onbranch:main.path=" + included},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			stdout, stderr, code := runConfig(t, repo, home,
+				"-c", tc.override, cmdConfig, subGet, "x.y")
+			if code != 0 || stdout != "from-include\n" {
+				t.Fatalf("command-line include: exit %d, stdout %q, stderr %q", code, stdout, stderr)
+			}
+		})
+	}
+
+	stdout, stderr, code := runConfig(t, repo, home,
+		"-c", "x.y=before",
+		"-c", "include.path="+included,
+		"-c", "x.y=after",
+		cmdConfig, subGet, flagAll, "x.y")
+	if code != 0 || stdout != "before\nfrom-include\nafter\n" {
+		t.Fatalf("ordered command-line include: exit %d, stdout %q, stderr %q", code, stdout, stderr)
 	}
 }
 
@@ -570,6 +614,9 @@ func TestGitWildMatch(t *testing.T) {
 		{pattern: "a**c", value: "ab/c", want: false},
 		{pattern: "a**c", value: "abbc", want: true},
 		{pattern: "release/[0-9]?", value: "release/12", want: true},
+		{pattern: "a[!x]b", value: "a/b", want: false},
+		{pattern: "a[!x]b", value: "ayb", want: true},
+		{pattern: "a[]]b", value: "a]b", want: true},
 		{pattern: "repo", value: "REPO", insensitive: true, want: true},
 		{pattern: "repo", value: "REPO", want: false},
 	}
@@ -846,7 +893,7 @@ func TestConfigNoSystemFalseKeepsSystemScopeEnabled(t *testing.T) {
 
 	env := []string{
 		"HOME=" + home,
-		"XDG_CONFIG_HOME=",
+		emptyXDGConfigHome,
 		"GIT_CONFIG_NOSYSTEM=false",
 		"GIT_CONFIG_SYSTEM=" + system,
 	}
@@ -899,6 +946,33 @@ func TestConfigRejectsInvalidBooleans(t *testing.T) {
 			t.Fatalf("stderr = %q, want %q", stderr, want)
 		}
 	})
+}
+
+func TestConfigRejectsInvalidNoSystemBeforeExplicitWrite(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	home := filepath.Join(dir, "home")
+	mkdirAll(t, home)
+
+	target := filepath.Join(dir, "config")
+	env := []string{"HOME=" + home, emptyXDGConfigHome, "GIT_CONFIG_NOSYSTEM=maybe"}
+
+	stdout, stderr, err := runGogitEnv(t, dir, env,
+		cmdConfig, subSet, flagFile, target, "x.y", "value")
+
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 128 || stdout != "" {
+		t.Fatalf("invalid environment bool: stdout %q, stderr %q, err %v", stdout, stderr, err)
+	}
+
+	if want := "fatal: bad boolean environment value 'maybe' for 'GIT_CONFIG_NOSYSTEM'\n"; stderr != want {
+		t.Fatalf("stderr = %q, want %q", stderr, want)
+	}
+
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Fatalf("explicit config file was created: %v", err)
+	}
 }
 
 func TestSystemConfigPathForGitInstallation(t *testing.T) {
@@ -974,6 +1048,22 @@ func TestConfigInvalidCombinations(t *testing.T) {
 				t.Fatalf("gogit %v modified the config:\n%s", tc.args, got)
 			}
 		})
+	}
+}
+
+func TestConfigFlagErrorsUseUsageStatus(t *testing.T) {
+	t.Parallel()
+
+	repo, home := newConfigRepo(t, baseConfig)
+
+	for _, args := range [][]string{
+		{cmdConfig, "--definitely-invalid"},
+		{cmdConfig, subGet, "--definitely-invalid", keyUserName},
+	} {
+		_, stderr, code := runConfig(t, repo, home, args...)
+		if code != 129 {
+			t.Errorf("gogit %v: exit %d, want 129 (stderr %q)", args, code, stderr)
+		}
 	}
 }
 
@@ -1072,6 +1162,56 @@ func TestConfigOutsideRepository(t *testing.T) {
 	// A local write outside a repository must fail rather than invent a file.
 	if _, _, code := runConfig(t, dir, home, cmdConfig, subSet, keyUserName, "X"); code == 0 {
 		t.Fatal("a local write outside a repository unexpectedly succeeded")
+	}
+}
+
+func TestConfigRejectsMalformedGitFile(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		gitfile string
+		want    func(string) string
+	}{
+		{
+			name:    "invalid format",
+			gitfile: "not a gitfile\n",
+			want: func(repo string) string {
+				return "fatal: invalid gitfile format: " + filepath.Join(repo, ".git") + "\n"
+			},
+		},
+		{
+			name:    "missing target",
+			gitfile: "gitdir: missing\n",
+			want: func(repo string) string {
+				return "fatal: not a git repository: " + filepath.Join(repo, "missing") + "\n"
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			base := t.TempDir()
+			repo := filepath.Join(base, "repo")
+			home := filepath.Join(base, "home")
+
+			mkdirAll(t, repo)
+			mkdirAll(t, home)
+			writeConfig(t, filepath.Join(repo, ".git"), tc.gitfile)
+			writeConfig(t, filepath.Join(home, ".gitconfig"), "[user]\n\tname = GLOBAL\n")
+
+			resolvedRepo, err := filepath.EvalSymlinks(repo)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			stdout, stderr, code := runConfig(t, repo, home, cmdConfig, subGet, keyUserName)
+			if code != 128 || stdout != "" || stderr != tc.want(resolvedRepo) {
+				t.Fatalf("malformed gitfile: exit %d, stdout %q, stderr %q", code, stdout, stderr)
+			}
+		})
 	}
 }
 

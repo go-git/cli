@@ -245,6 +245,10 @@ func (p *parser) parseVariable(lineStart int, alone bool) error {
 	p.consumeLineEnd()
 	o.lineEnd = p.pos
 
+	if !alone {
+		p.curSec.lineEnd = p.pos
+	}
+
 	o.secIdx = len(p.f.sections) - 1
 	p.f.options = append(p.f.options, o)
 	p.curSec.entryEnd = p.pos

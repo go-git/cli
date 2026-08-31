@@ -318,6 +318,32 @@ func TestUnsetKeepsRepeatedSectionHeadersWhenGroupHasValues(t *testing.T) {
 	}
 }
 
+func TestUnsetKeepsHeaderSharedWithRemovedOption(t *testing.T) {
+	t.Parallel()
+
+	f := mustParse(t, "[section] one = 1\n\ttwo = 2\n")
+	if _, err := f.UnsetAll(mustKey(t, "section.one")); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, want := string(f.Bytes()), "[section]\n\ttwo = 2\n"; got != want {
+		t.Fatalf("UnsetAll = %q, want %q", got, want)
+	}
+}
+
+func TestUnsetRemovesHeaderSharedWithOnlyOption(t *testing.T) {
+	t.Parallel()
+
+	f := mustParse(t, "[section] one = 1\n")
+	if _, err := f.UnsetAll(mustKey(t, "section.one")); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := string(f.Bytes()); got != "" {
+		t.Fatalf("UnsetAll = %q, want empty file", got)
+	}
+}
+
 func TestUnsetRemovesAllEmptyRepeatedSections(t *testing.T) {
 	t.Parallel()
 

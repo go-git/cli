@@ -12,6 +12,7 @@ import (
 var (
 	configOverridesRaw []string
 	configOverrides    = map[string]string{}
+	configImplicit     = map[string]bool{}
 	configOverrideMu   sync.Mutex
 
 	// configOverrideList keeps the -c overrides in the order they were given
@@ -23,8 +24,9 @@ var (
 
 // configOverride is a single -c key=value pair with its key parsed.
 type configOverride struct {
-	key   gitconfig.Key
-	value string
+	key      gitconfig.Key
+	value    string
+	implicit bool
 }
 
 // splitKV splits "<key>=<value>" into (key, value, true). Invalid input
@@ -39,10 +41,15 @@ func splitKV(s string) (string, string, bool) {
 }
 
 func applyConfigOverride(key, value string) {
+	applyConfigOverrideValue(key, value, false)
+}
+
+func applyConfigOverrideValue(key, value string, implicit bool) {
 	configOverrideMu.Lock()
 	defer configOverrideMu.Unlock()
 
 	configOverrides[key] = value
+	configImplicit[key] = implicit
 }
 
 func resetConfigOverrides() {
@@ -50,6 +57,7 @@ func resetConfigOverrides() {
 	defer configOverrideMu.Unlock()
 
 	configOverrides = map[string]string{}
+	configImplicit = map[string]bool{}
 	configOverridesRaw = nil
 	configOverrideList = nil
 }
@@ -59,8 +67,15 @@ func resetConfigOverrides() {
 func applyConfigOverridesFromFlags() error {
 	for _, raw := range configOverridesRaw {
 		k, v, ok := splitKV(raw)
+		implicit := !ok
+
 		if !ok {
-			return fmt.Errorf("invalid -c value %q (want key=value)", raw)
+			k = raw
+			v = ""
+
+			if k == "" {
+				return fmt.Errorf("invalid -c value %q", raw)
+			}
 		}
 
 		key, kerr := gitconfig.ParseKey(k)
@@ -68,9 +83,11 @@ func applyConfigOverridesFromFlags() error {
 			return fmt.Errorf("invalid -c value %q: %w", raw, kerr)
 		}
 
-		configOverrideList = append(configOverrideList, configOverride{key: key, value: v})
+		configOverrideList = append(configOverrideList, configOverride{
+			key: key, value: v, implicit: implicit,
+		})
 
-		applyConfigOverride(k, v)
+		applyConfigOverrideValue(k, v, implicit)
 	}
 
 	return nil
@@ -93,11 +110,16 @@ func hasConfigOverride(key string) bool {
 func configBool(key string, repoCfg *config.Config, defaultVal bool) bool {
 	configOverrideMu.Lock()
 	v, ok := configOverrides[key]
+	implicit := configImplicit[key]
 	configOverrideMu.Unlock()
 
 	_ = repoCfg
 
 	if ok {
+		if implicit {
+			return true
+		}
+
 		return strings.EqualFold(v, "true")
 	}
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,8 @@ import (
 
 // gitDirName is the name of a repository's git directory inside a work tree.
 const gitDirName = ".git"
+
+var errNoRepository = errors.New("not a git repository")
 
 // findGitDir locates the repository's git directory.
 func findGitDir() (string, error) {
@@ -62,7 +65,7 @@ func discoverGitDir() (string, string, error) {
 
 		parent := filepath.Dir(dir)
 		if parent == dir {
-			return "", "", errors.New("not a git repository")
+			return "", "", errNoRepository
 		}
 
 		dir = parent
@@ -78,19 +81,42 @@ func readGitFile(path string) (string, error) {
 
 	target, ok := strings.CutPrefix(strings.TrimSpace(string(data)), "gitdir:")
 	if !ok {
-		return "", errors.New("not a git repository")
+		return "", fmt.Errorf("invalid gitfile format: %s", path)
 	}
 
 	target = strings.TrimSpace(target)
 	if target == "" {
-		return "", errors.New("not a git repository")
+		return "", fmt.Errorf("invalid gitfile format: %s", path)
 	}
 
 	if !filepath.IsAbs(target) {
 		target = filepath.Join(filepath.Dir(path), target)
 	}
 
-	return filepath.Clean(target), nil
+	target = filepath.Clean(target)
+	if !isGitDir(target) && !isLinkedWorktreeGitDir(target) {
+		return "", fmt.Errorf("not a git repository: %s", target)
+	}
+
+	return target, nil
+}
+
+func isLinkedWorktreeGitDir(dir string) bool {
+	data, err := os.ReadFile(filepath.Join(dir, "commondir"))
+	if err != nil {
+		return false
+	}
+
+	common := strings.TrimSpace(string(data))
+	if common == "" {
+		return false
+	}
+
+	if !filepath.IsAbs(common) {
+		common = filepath.Join(dir, common)
+	}
+
+	return isGitDir(filepath.Clean(common))
 }
 
 // isGitDir reports whether dir is itself a git directory, which is how a bare
