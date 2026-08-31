@@ -13,6 +13,8 @@ import (
 
 const maxConfigIncludeDepth = 10
 
+const hasConfigRemoteURLCondition = "hasconfig:remote.*.url:"
+
 type configIncludeContext struct {
 	gitDirs    []string
 	branch     string
@@ -32,7 +34,7 @@ func effectiveConfigValues(sources []configSource, key gitconfig.Key) ([]string,
 	var values []string
 
 	for _, source := range sources {
-		found, err := sourceValues(source, key, &ctx, map[string]bool{}, 0)
+		found, err := sourceValues(source, key, &ctx, map[string]bool{}, 0, false)
 		if err != nil {
 			return nil, err
 		}
@@ -49,6 +51,7 @@ func sourceValues(
 	ctx *configIncludeContext,
 	stack map[string]bool,
 	depth int,
+	includedByHasConfig bool,
 ) ([]string, error) {
 	if source.file == nil {
 		var values []string
@@ -65,6 +68,14 @@ func sourceValues(
 	var values []string
 
 	for _, entry := range source.file.Entries() {
+		if includedByHasConfig && isRemoteURL(entry.Key) {
+			return nil, &gitExitError{
+				code: exitFatal,
+				msg: "fatal: remote URLs cannot be configured in file directly or indirectly " +
+					"included by includeIf.hasconfig:remote.*.url",
+			}
+		}
+
 		if entry.Key.Matches(key) {
 			values = append(values, entry.Value)
 		}
@@ -82,7 +93,15 @@ func sourceValues(
 			continue
 		}
 
-		found, err := sourceValues(included, key, ctx, stack, depth+1)
+		condition, _ := includeCondition(entry.Key)
+		found, err := sourceValues(
+			included,
+			key,
+			ctx,
+			stack,
+			depth+1,
+			includedByHasConfig || strings.HasPrefix(condition, hasConfigRemoteURLCondition),
+		)
 		delete(stack, included.location.path)
 
 		if err != nil {
@@ -170,8 +189,7 @@ func conditionMatches(condition, sourcePath string, ctx *configIncludeContext) b
 		return gitWildMatch(pattern, ctx.branch, false)
 	}
 
-	const remoteCondition = "hasconfig:remote.*.url:"
-	if pattern, ok := strings.CutPrefix(condition, remoteCondition); ok {
+	if pattern, ok := strings.CutPrefix(condition, hasConfigRemoteURLCondition); ok {
 		for _, remoteURL := range ctx.remoteURLs {
 			if gitWildMatch(pattern, remoteURL, false) {
 				return true
@@ -225,19 +243,25 @@ func gitWildMatch(pattern, value string, insensitive bool) bool {
 	for i := 0; i < len(pattern); {
 		switch pattern[i] {
 		case '*':
-			if i+1 < len(pattern) && pattern[i+1] == '*' {
-				i += 2
-				if i < len(pattern) && pattern[i] == '/' {
-					expression.WriteString("(?:.*/)?")
+			start := i
+			for i < len(pattern) && pattern[i] == '*' {
+				i++
+			}
 
-					i++
-				} else {
-					expression.WriteString(".*")
-				}
-			} else {
+			doubleStar := i-start >= 2 && (start == 0 || pattern[start-1] == '/') &&
+				(i == len(pattern) || pattern[i] == '/')
+			if !doubleStar {
 				expression.WriteString("[^/]*")
 
+				continue
+			}
+
+			if i < len(pattern) {
+				expression.WriteString("(?:.*/)?")
+
 				i++
+			} else {
+				expression.WriteString(".*")
 			}
 		case '?':
 			expression.WriteString("[^/]")

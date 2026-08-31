@@ -19,6 +19,7 @@ const (
 	exitUnsetMissing  = 5   // unset of a key that does not exist
 	exitCannotReplace = 5   // single value cannot replace several
 	exitFatal         = 128 // the config file could not be read
+	exitUsage         = 129 // the command invocation is malformed
 )
 
 // configOpts holds the flags shared by `config`, `config get`, `config set`
@@ -92,7 +93,7 @@ var configCmd = &cobra.Command{
 		"The modern forms are `config get <key>`, `config set <key> <value>` and\n" +
 		"`config unset <key>`. The legacy flag spellings (--get, --add, --unset-all\n" +
 		"and a bare `config <key> [<value>]`) are also accepted.",
-	Args:                  cobra.RangeArgs(1, 2),
+	Args:                  configArgs(cobra.RangeArgs(1, 2)),
 	RunE:                  runConfigLegacy,
 	DisableFlagsInUseLine: true,
 	SilenceUsage:          true,
@@ -102,7 +103,7 @@ var configCmd = &cobra.Command{
 var configGetCmd = &cobra.Command{
 	Use:                   "get [<options>] <key>",
 	Short:                 "Print the value of a configuration key",
-	Args:                  cobra.ExactArgs(1),
+	Args:                  configArgs(cobra.ExactArgs(1)),
 	RunE:                  func(_ *cobra.Command, args []string) error { return runConfigGet(&getOpts, args[0]) },
 	DisableFlagsInUseLine: true,
 	SilenceUsage:          true,
@@ -112,7 +113,7 @@ var configGetCmd = &cobra.Command{
 var configSetCmd = &cobra.Command{
 	Use:   "set [<options>] <key> <value>",
 	Short: "Set the value of a configuration key",
-	Args:  cobra.ExactArgs(2),
+	Args:  configArgs(cobra.ExactArgs(2)),
 	RunE: func(_ *cobra.Command, args []string) error {
 		return runConfigWrite(&setOpts, args[0], args[1], writeSet)
 	},
@@ -124,7 +125,7 @@ var configSetCmd = &cobra.Command{
 var configUnsetCmd = &cobra.Command{
 	Use:   "unset [<options>] <key>",
 	Short: "Remove a configuration key",
-	Args:  cobra.ExactArgs(1),
+	Args:  configArgs(cobra.ExactArgs(1)),
 	RunE: func(_ *cobra.Command, args []string) error {
 		return runConfigWrite(&unsetOpts, args[0], "", writeUnset)
 	},
@@ -310,7 +311,21 @@ func configReadError(cf configFile, err error) error {
 }
 
 func usageError(msg string) error {
-	return &gitExitError{code: exitInvalidKey, msg: "error: " + msg}
+	return &gitExitError{code: exitUsage, msg: "error: " + msg}
+}
+
+func configArgs(validate cobra.PositionalArgs) cobra.PositionalArgs {
+	return func(cmd *cobra.Command, args []string) error {
+		if err := validate(cmd, args); err != nil {
+			return usageError(err.Error())
+		}
+
+		if err := cmd.ValidateFlagGroups(); err != nil {
+			return usageError(err.Error())
+		}
+
+		return nil
+	}
 }
 
 // expandPath applies --path canonicalization: a leading ~ becomes the user's

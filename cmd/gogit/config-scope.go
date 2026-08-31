@@ -3,14 +3,19 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
 
 	gitconfig "github.com/go-git/cli/internal/plumbing/format/config"
 )
+
+const defaultSystemConfigFile = "/etc/gitconfig"
 
 // gitExitError carries a git-compatible exit status out of a command. msg, when
 // non-empty, is the single stderr line to print; main must not print the
@@ -72,7 +77,9 @@ func readSources(o *configOpts) ([]configSource, error) {
 
 	sources := make([]configSource, 0)
 
-	if p, ok := systemConfigPath(); ok {
+	if p, ok, err := systemConfigPath(); err != nil {
+		return nil, err
+	} else if ok {
 		src, loaded, err := loadOptionalSource(absoluteFile(p))
 		if err != nil {
 			return nil, err
@@ -144,6 +151,10 @@ func writeTarget(o *configOpts) (configFile, error) {
 func explicitReadFiles(o *configOpts) ([]configFile, bool, error) {
 	switch {
 	case o.file != "":
+		if o.file == "-" {
+			return []configFile{{path: "-", display: "standard input"}}, true, nil
+		}
+
 		return []configFile{absoluteFile(o.file)}, true, nil
 
 	case o.local:
@@ -162,7 +173,11 @@ func explicitReadFiles(o *configOpts) ([]configFile, bool, error) {
 		return files, true, nil
 
 	case o.system:
-		p, ok := systemConfigPath()
+		p, ok, err := systemConfigPath()
+		if err != nil {
+			return nil, true, err
+		}
+
 		if !ok {
 			return nil, true, errors.New("system config is disabled by GIT_CONFIG_NOSYSTEM")
 		}
@@ -177,6 +192,13 @@ func explicitReadFiles(o *configOpts) ([]configFile, bool, error) {
 func explicitWriteLocation(o *configOpts) (configFile, bool, error) {
 	switch {
 	case o.file != "":
+		if o.file == "-" {
+			return configFile{}, true, &gitExitError{
+				code: exitFatal,
+				msg:  "fatal: writing to stdin is not supported",
+			}
+		}
+
 		return absoluteFile(o.file), true, nil
 
 	case o.local:
@@ -199,7 +221,11 @@ func explicitWriteLocation(o *configOpts) (configFile, bool, error) {
 		return absoluteFile(paths[len(paths)-1]), true, nil
 
 	case o.system:
-		p, ok := systemConfigPath()
+		p, ok, err := systemConfigPath()
+		if err != nil {
+			return configFile{}, true, err
+		}
+
 		if !ok {
 			return configFile{}, true, errors.New("system config is disabled by GIT_CONFIG_NOSYSTEM")
 		}
@@ -211,6 +237,20 @@ func explicitWriteLocation(o *configOpts) (configFile, bool, error) {
 }
 
 func loadSource(cf configFile) (configSource, error) {
+	if cf.path == "-" {
+		data, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			return configSource{}, err
+		}
+
+		f, err := gitconfig.Parse(data)
+		if err != nil {
+			return configSource{}, configReadError(cf, err)
+		}
+
+		return configSource{location: cf, file: f}, nil
+	}
+
 	f, err := gitconfig.ReadFile(cf.path)
 	if err != nil {
 		return configSource{}, configReadError(cf, err)
@@ -263,29 +303,85 @@ func globalConfigPaths() []string {
 
 // systemConfigPath reports the system config file, and whether the system
 // scope is enabled at all.
-func systemConfigPath() (string, bool) {
-	if gitEnvBool(os.Getenv("GIT_CONFIG_NOSYSTEM")) {
-		return "", false
+func systemConfigPath() (string, bool, error) {
+	noSystem, valid := gitBool(os.Getenv("GIT_CONFIG_NOSYSTEM"), false)
+	if !valid {
+		return "", false, &gitExitError{
+			code: exitFatal,
+			msg: fmt.Sprintf(
+				"fatal: bad boolean environment value '%s' for 'GIT_CONFIG_NOSYSTEM'",
+				os.Getenv("GIT_CONFIG_NOSYSTEM"),
+			),
+		}
+	}
+
+	if noSystem {
+		return "", false, nil
 	}
 
 	if p, ok := os.LookupEnv("GIT_CONFIG_SYSTEM"); ok {
 		if p == "" || p == os.DevNull {
-			return "", false
+			return "", false, nil
 		}
 
-		return p, true
+		return p, true, nil
 	}
 
-	return "/etc/gitconfig", true
+	return defaultSystemConfigPath(), true, nil
 }
 
-func gitEnvBool(value string) bool {
-	switch strings.ToLower(value) {
-	case "", "0", "false", "no", "off":
-		return false
-	default:
-		return true
+func defaultSystemConfigPath() string {
+	gitPath, err := exec.LookPath("git")
+	if err == nil && !sameExecutable(gitPath) {
+		if path := systemConfigPathForExecutable(runtime.GOOS, gitPath); path != "" {
+			return path
+		}
 	}
+
+	if runtime.GOOS == "windows" {
+		if programFiles := os.Getenv("PROGRAMFILES"); programFiles != "" {
+			return filepath.Join(programFiles, "Git", "etc", "gitconfig")
+		}
+	}
+
+	return defaultSystemConfigFile
+}
+
+func sameExecutable(path string) bool {
+	executable, err := os.Executable()
+	if err != nil {
+		return false
+	}
+
+	want, err := os.Stat(executable)
+	if err != nil {
+		return false
+	}
+
+	got, err := os.Stat(path)
+
+	return err == nil && os.SameFile(want, got)
+}
+
+func systemConfigPathForExecutable(goos, executable string) string {
+	dir := filepath.Dir(executable)
+
+	var prefix string
+
+	switch filepath.Base(dir) {
+	case "bin", "cmd":
+		prefix = filepath.Dir(dir)
+	case "git-core":
+		prefix = filepath.Dir(filepath.Dir(dir))
+	default:
+		return ""
+	}
+
+	if goos != "windows" && prefix == "/usr" {
+		return defaultSystemConfigFile
+	}
+
+	return filepath.Join(prefix, "etc", "gitconfig")
 }
 
 // localConfigFile returns the repository's config file. For a linked worktree
@@ -312,12 +408,33 @@ func localConfigFile() (configFile, error) {
 }
 
 func worktreeConfigFile(local *gitconfig.File) (configFile, bool, error) {
-	enabled := false
-
 	key := gitconfig.Key{Section: "extensions", Name: "worktreeConfig"}
+
+	var (
+		value           string
+		implicit, found bool
+	)
+
 	for _, entry := range local.Entries() {
 		if entry.Key.Matches(key) {
-			enabled = gitBool(entry.Value, entry.Implicit)
+			value, implicit, found = entry.Value, entry.Implicit, true
+		}
+	}
+
+	enabled := false
+
+	if found {
+		var valid bool
+
+		enabled, valid = gitBool(value, implicit)
+		if !valid {
+			return configFile{}, false, &gitExitError{
+				code: exitFatal,
+				msg: fmt.Sprintf(
+					"fatal: bad boolean config value '%s' for 'extensions.worktreeconfig'",
+					value,
+				),
+			}
 		}
 	}
 
@@ -336,19 +453,21 @@ func worktreeConfigFile(local *gitconfig.File) (configFile, bool, error) {
 	}, true, nil
 }
 
-func gitBool(value string, implicit bool) bool {
+func gitBool(value string, implicit bool) (bool, bool) {
 	if implicit {
-		return true
+		return true, true
 	}
 
 	switch strings.ToLower(value) {
 	case "true", "yes", "on", "1":
-		return true
+		return true, true
+	case "", "false", "no", "off", "0":
+		return false, true
 	}
 
 	n, err := strconv.ParseInt(value, 10, 64)
 
-	return err == nil && n != 0
+	return n != 0, err == nil
 }
 
 // commonGitDir follows a linked worktree's `commondir` pointer back to the

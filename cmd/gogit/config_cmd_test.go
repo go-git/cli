@@ -506,6 +506,54 @@ func TestConfigIncludes(t *testing.T) {
 	}
 }
 
+func TestConfigRejectsRemoteURLFromHasConfigInclude(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		conditional string
+		nested      string
+	}{
+		{
+			name:        "direct",
+			conditional: "[remote \"other\"]\n\turl = https://other/repo\n[x]\n\ty = included\n",
+		},
+		{
+			name:        "nested",
+			conditional: "[include]\n\tpath = nested.cfg\n[x]\n\ty = included\n",
+			nested:      "[remote \"other\"]\n\turl = https://other/repo\n",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			repo, home := newConfigRepo(t, `[remote "origin"]
+	url = https://example/repo
+[includeIf "hasconfig:remote.*.url:https://example/**"]
+	path = conditional.cfg
+`)
+			writeConfig(t, filepath.Join(repo, ".git", "conditional.cfg"), tc.conditional)
+
+			if tc.nested != "" {
+				writeConfig(t, filepath.Join(repo, ".git", "nested.cfg"), tc.nested)
+			}
+
+			stdout, stderr, code := runConfig(t, repo, home, cmdConfig, subGet, "x.y")
+			if code != 128 || stdout != "" {
+				t.Fatalf("hasconfig include: exit %d, stdout %q, stderr %q", code, stdout, stderr)
+			}
+
+			want := "fatal: remote URLs cannot be configured in file directly or indirectly " +
+				"included by includeIf.hasconfig:remote.*.url\n"
+			if stderr != want {
+				t.Fatalf("stderr = %q, want %q", stderr, want)
+			}
+		})
+	}
+}
+
 func TestGitWildMatch(t *testing.T) {
 	t.Parallel()
 
@@ -517,6 +565,10 @@ func TestGitWildMatch(t *testing.T) {
 	}{
 		{pattern: "**/group/**", value: "/tmp/group/repo/.git", want: true},
 		{pattern: "feature/**", value: "feature/team/topic", want: true},
+		{pattern: "a/**/c", value: "a/c", want: true},
+		{pattern: "a/**/c", value: "a/b/d/c", want: true},
+		{pattern: "a**c", value: "ab/c", want: false},
+		{pattern: "a**c", value: "abbc", want: true},
 		{pattern: "release/[0-9]?", value: "release/12", want: true},
 		{pattern: "repo", value: "REPO", insensitive: true, want: true},
 		{pattern: "repo", value: "REPO", want: false},
@@ -630,6 +682,53 @@ func TestConfigFile(t *testing.T) {
 
 	if got, want := readFileString(t, fresh), "[x]\n\ty = z\n"; got != want {
 		t.Fatalf("new file = %q, want %q", got, want)
+	}
+}
+
+func TestConfigFileDashUsesStdin(t *testing.T) {
+	t.Parallel()
+
+	base := t.TempDir()
+	home := filepath.Join(base, "home")
+	mkdirAll(t, home)
+
+	stdout, stderr, err := runGogitEnvStdin(
+		t,
+		base,
+		configEnv(home),
+		"[user]\n\tname = Alice\n",
+		cmdConfig,
+		subGet,
+		flagFile,
+		"-",
+		keyUserName,
+	)
+	if err != nil || stdout != "Alice\n" || stderr != "" {
+		t.Fatalf("stdin read: stdout %q, stderr %q, err %v", stdout, stderr, err)
+	}
+
+	stdout, stderr, err = runGogitEnvStdin(
+		t,
+		base,
+		configEnv(home),
+		"",
+		cmdConfig,
+		subSet,
+		flagFile,
+		"-",
+		keyUserName,
+		"Alice",
+	)
+
+	var exitErr *exec.ExitError
+
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 128 || stdout != "" ||
+		stderr != "fatal: writing to stdin is not supported\n" {
+		t.Fatalf("stdin write: stdout %q, stderr %q, err %v", stdout, stderr, err)
+	}
+
+	if _, err := os.Stat(filepath.Join(base, "-")); !os.IsNotExist(err) {
+		t.Fatalf("stdin write created a literal '-' file: %v", err)
 	}
 }
 
@@ -762,6 +861,86 @@ func TestConfigNoSystemFalseKeepsSystemScopeEnabled(t *testing.T) {
 	}
 }
 
+func TestConfigRejectsInvalidBooleans(t *testing.T) {
+	t.Parallel()
+
+	t.Run("environment", func(t *testing.T) {
+		t.Parallel()
+
+		repo, home := newConfigRepo(t, "[user]\n\tname = Alice\n")
+		env := append(configEnv(home), "GIT_CONFIG_NOSYSTEM=maybe")
+
+		stdout, stderr, err := runGogitEnv(t, repo, env, cmdConfig, subGet, keyUserName)
+
+		var exitErr *exec.ExitError
+
+		if !errors.As(err, &exitErr) || exitErr.ExitCode() != 128 || stdout != "" {
+			t.Fatalf("invalid environment bool: stdout %q, stderr %q, err %v", stdout, stderr, err)
+		}
+
+		want := "fatal: bad boolean environment value 'maybe' for 'GIT_CONFIG_NOSYSTEM'\n"
+		if stderr != want {
+			t.Fatalf("stderr = %q, want %q", stderr, want)
+		}
+	})
+
+	t.Run("worktree extension", func(t *testing.T) {
+		t.Parallel()
+
+		repo, home := newConfigRepo(t, "[extensions]\n\tworktreeConfig = maybe\n")
+
+		stdout, stderr, code := runConfig(t, repo, home, cmdConfig, subGet, keyUserName)
+		if code != 128 || stdout != "" {
+			t.Fatalf("invalid config bool: exit %d, stdout %q, stderr %q", code, stdout, stderr)
+		}
+
+		want := "fatal: bad boolean config value 'maybe' for 'extensions.worktreeconfig'\n"
+		if stderr != want {
+			t.Fatalf("stderr = %q, want %q", stderr, want)
+		}
+	})
+}
+
+func TestSystemConfigPathForGitInstallation(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		goos       string
+		executable string
+		want       string
+	}{
+		{
+			name:       "Homebrew",
+			goos:       "darwin",
+			executable: "/opt/homebrew/bin/git",
+			want:       "/opt/homebrew/etc/gitconfig",
+		},
+		{
+			name:       "Unix system",
+			goos:       "linux",
+			executable: "/usr/bin/git",
+			want:       defaultSystemConfigFile,
+		},
+		{
+			name:       "libexec",
+			goos:       "darwin",
+			executable: "/opt/local/libexec/git-core/git",
+			want:       "/opt/local/etc/gitconfig",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := systemConfigPathForExecutable(tc.goos, tc.executable); got != tc.want {
+				t.Fatalf("system path = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestConfigInvalidCombinations(t *testing.T) {
 	t.Parallel()
 
@@ -786,9 +965,9 @@ func TestConfigInvalidCombinations(t *testing.T) {
 
 			repo, home := newConfigRepo(t, baseConfig)
 
-			_, _, code := runConfig(t, repo, home, tc.args...)
-			if code == 0 {
-				t.Fatalf("gogit %v unexpectedly succeeded", tc.args)
+			_, stderr, code := runConfig(t, repo, home, tc.args...)
+			if code != 129 {
+				t.Fatalf("gogit %v: exit %d, want 129 (stderr %q)", tc.args, code, stderr)
 			}
 
 			if got := readFileString(t, filepath.Join(repo, ".git", cmdConfig)); got != baseConfig {

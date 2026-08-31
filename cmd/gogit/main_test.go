@@ -70,8 +70,22 @@ func runGogitEnv(t *testing.T, dir string, env []string, args ...string) (string
 func runGogitStdin(t *testing.T, dir string, stdin string, args ...string) (string, string, error) {
 	t.Helper()
 
+	return runGogitEnvStdin(t, dir, nil, stdin, args...)
+}
+
+func runGogitEnvStdin(
+	t *testing.T,
+	dir string,
+	env []string,
+	stdin string,
+	args ...string,
+) (string, string, error) {
+	t.Helper()
+
 	cmd := exec.Command(gogitBin, args...)
 	cmd.Dir = dir
+
+	cmd.Env = append(os.Environ(), env...)
 	cmd.Stdin = strings.NewReader(stdin)
 
 	var stdout, stderr bytes.Buffer
