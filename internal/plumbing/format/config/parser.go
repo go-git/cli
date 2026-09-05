@@ -324,7 +324,7 @@ func (p *parser) parseValue() (string, error) { //nolint:gocognit // parser stat
 
 			p.pos++
 
-			if inQuote || (c != ' ' && c != '\t') {
+			if inQuote || (c != ' ' && c != '\t' && c != '\r') {
 				lastKeep = b.Len()
 			}
 		}
@@ -355,7 +355,9 @@ func unescape(c byte) (byte, bool) {
 }
 
 func (p *parser) skipBlank() {
-	for p.pos < len(p.data) && (p.data[p.pos] == ' ' || p.data[p.pos] == '\t') {
+	for p.pos < len(p.data) &&
+		(p.data[p.pos] == ' ' || p.data[p.pos] == '\t' ||
+			(p.data[p.pos] == '\r' && !p.peekIsLF())) {
 		p.pos++
 	}
 }

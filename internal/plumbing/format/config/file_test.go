@@ -109,6 +109,25 @@ func TestValues(t *testing.T) {
 	}
 }
 
+func TestParsePreservesBOMAndGitWhitespace(t *testing.T) {
+	t.Parallel()
+
+	const bom = "\xef\xbb\xbf"
+
+	f := mustParse(t, bom+"[a]\rx = one\rtwo\r")
+	if got, ok := f.Get(mustKey(t, "a.x")); !ok || got != "one\rtwo" {
+		t.Fatalf("Get(a.x) = (%q, %v), want (%q, true)", got, ok, "one\rtwo")
+	}
+
+	if err := f.Set(mustKey(t, "a.x"), "changed"); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := string(f.Bytes()); !strings.HasPrefix(got, bom) {
+		t.Fatalf("mutation dropped the UTF-8 BOM: %q", got)
+	}
+}
+
 // TestGetDistinguishesMissingFromEmpty pins the difference the command layer
 // turns into "exit 1 with no output" versus "exit 0 with one blank line".
 func TestGetDistinguishesMissingFromEmpty(t *testing.T) {

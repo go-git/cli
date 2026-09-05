@@ -18,10 +18,12 @@ type configIncludeContext struct {
 	gitDirs    []string
 	branch     string
 	remoteURLs []string
+	sources    map[string]configSource
 }
 
 func effectiveConfigValues(sources []configSource, key gitconfig.Key) ([]string, error) {
 	ctx := configContext()
+	ctx.sources = make(map[string]configSource)
 
 	urls, err := collectRemoteURLs(sources, &ctx)
 	if err != nil {
@@ -143,14 +145,18 @@ func includedSource(
 
 	stack[path] = true
 
-	source, err := loadSource(absoluteFile(path))
-	if err != nil {
-		delete(stack, path)
+	source, loaded := ctx.sources[path]
+	if !loaded {
+		source, err = loadSource(absoluteFile(path))
+		if err != nil {
+			delete(stack, path)
 
-		return configSource{}, false, err
+			return configSource{}, false, err
+		}
+
+		source.includes = true
+		ctx.sources[path] = source
 	}
-
-	source.includes = true
 
 	return source, true, nil
 }
@@ -184,6 +190,10 @@ func conditionMatches(condition, sourcePath string, ctx *configIncludeContext) b
 	}
 
 	if pattern, ok := strings.CutPrefix(condition, "onbranch:"); ok {
+		if ctx.branch == "" {
+			return false
+		}
+
 		if strings.HasSuffix(pattern, "/") {
 			pattern += "**"
 		}
@@ -276,6 +286,10 @@ func (m *wildMatcher) matchPosition(patternPos, valuePos int) bool {
 	}
 
 	switch m.pattern[patternPos] {
+	case '\\':
+		return patternPos+1 < len(m.pattern) && valuePos < len(m.value) &&
+			equalWildByte(m.pattern[patternPos+1], m.value[valuePos], m.insensitive) &&
+			m.match(patternPos+2, valuePos+1)
 	case '*':
 		return m.matchStar(patternPos, valuePos)
 	case '?':
@@ -343,10 +357,6 @@ func matchWildClass(
 	valuePos int,
 	insensitive bool,
 ) (int, bool, bool) {
-	if valuePos >= len(value) || value[valuePos] == '/' {
-		return 0, false, false
-	}
-
 	i := patternPos + 1
 	negated := false
 
@@ -361,15 +371,27 @@ func matchWildClass(
 	}
 
 	for i < len(pattern) && pattern[i] != ']' {
-		if pattern[i] == '\\' && i+1 < len(pattern) {
+		switch {
+		case pattern[i] == '\\' && i+1 < len(pattern):
 			i += 2
-		} else {
+		case pattern[i] == '[' && i+1 < len(pattern) && pattern[i+1] == ':':
+			end := strings.Index(pattern[i+2:], ":]")
+			if end < 0 {
+				return 0, false, false
+			}
+
+			i += end + 4
+		default:
 			i++
 		}
 	}
 
 	if i == len(pattern) {
 		return 0, false, false
+	}
+
+	if valuePos >= len(value) || value[valuePos] == '/' {
+		return i + 1, false, true
 	}
 
 	matched := wildClassContains(pattern[classStart:i], value[valuePos], insensitive)
@@ -382,6 +404,21 @@ func matchWildClass(
 
 func wildClassContains(class string, value byte, insensitive bool) bool {
 	for i := 0; i < len(class); {
+		if i+1 < len(class) && class[i] == '[' && class[i+1] == ':' {
+			end := strings.Index(class[i+2:], ":]")
+			if end < 0 {
+				return false
+			}
+
+			if matchesPOSIXClass(class[i+2:i+2+end], value, insensitive) {
+				return true
+			}
+
+			i += end + 4
+
+			continue
+		}
+
 		start := class[i]
 		if start == '\\' && i+1 < len(class) {
 			i++
@@ -417,6 +454,65 @@ func wildClassContains(class string, value byte, insensitive bool) bool {
 	return false
 }
 
+func matchesPOSIXClass(name string, value byte, insensitive bool) bool {
+	switch name {
+	case "alnum":
+		return isASCIIAlpha(value) || isASCIIDigit(value)
+	case "alpha":
+		return isASCIIAlpha(value)
+	case "blank":
+		return value == ' ' || value == '\t'
+	case "cntrl":
+		return value < 0x20 || value == 0x7f
+	case "digit":
+		return isASCIIDigit(value)
+	case "graph":
+		return value > ' ' && value < 0x7f
+	case "lower":
+		return isASCIILower(value) || insensitive && isASCIIUpper(value)
+	case "print":
+		return value >= ' ' && value < 0x7f
+	case "punct":
+		return isASCIIPunct(value)
+	case "space":
+		return isASCIISpace(value)
+	case "upper":
+		return isASCIIUpper(value) || insensitive && isASCIILower(value)
+	case "xdigit":
+		return isASCIIHexDigit(value)
+	default:
+		return false
+	}
+}
+
+func isASCIIAlpha(value byte) bool {
+	return isASCIILower(value) || isASCIIUpper(value)
+}
+
+func isASCIILower(value byte) bool {
+	return value >= 'a' && value <= 'z'
+}
+
+func isASCIIUpper(value byte) bool {
+	return value >= 'A' && value <= 'Z'
+}
+
+func isASCIIDigit(value byte) bool {
+	return value >= '0' && value <= '9'
+}
+
+func isASCIIHexDigit(value byte) bool {
+	return isASCIIDigit(value) || value >= 'a' && value <= 'f' || value >= 'A' && value <= 'F'
+}
+
+func isASCIIPunct(value byte) bool {
+	return value > ' ' && value < 0x7f && !isASCIIAlpha(value) && !isASCIIDigit(value)
+}
+
+func isASCIISpace(value byte) bool {
+	return strings.ContainsRune(" \t\n\v\f\r", rune(value))
+}
+
 func equalWildByte(left, right byte, insensitive bool) bool {
 	return foldWildByte(left, insensitive) == foldWildByte(right, insensitive)
 }
@@ -436,10 +532,15 @@ func resolveIncludePath(path, sourcePath string) (string, error) {
 	}
 
 	if !filepath.IsAbs(expanded) {
-		expanded = filepath.Join(filepath.Dir(sourcePath), expanded)
+		if sourcePath == "" || sourcePath == "-" {
+			return "", &gitExitError{code: exitFatal, msg: "fatal: relative config includes must come from files"}
+		}
+
+		parent, _ := filepath.Split(sourcePath)
+		expanded = parent + expanded
 	}
 
-	return filepath.Clean(expanded), nil
+	return expanded, nil
 }
 
 func configContext() configIncludeContext {
@@ -448,9 +549,12 @@ func configContext() configIncludeContext {
 		return configIncludeContext{}
 	}
 
-	abs, err := filepath.Abs(gitDir)
-	if err != nil {
-		abs = filepath.Clean(gitDir)
+	abs := gitDir
+	if !filepath.IsAbs(abs) {
+		cwd, err := os.Getwd()
+		if err == nil {
+			abs = cwd + "/" + gitDir
+		}
 	}
 
 	gitDirs := []string{abs}
@@ -465,7 +569,7 @@ func configContext() configIncludeContext {
 }
 
 func currentBranch(gitDir string) string {
-	data, err := os.ReadFile(filepath.Join(gitDir, "HEAD"))
+	data, err := os.ReadFile(gitDir + "/HEAD")
 	if err != nil {
 		return ""
 	}

@@ -6,6 +6,20 @@ import (
 	"path/filepath"
 )
 
+// LockError reports that the exclusive config lock could not be acquired.
+type LockError struct {
+	Path string
+	Err  error
+}
+
+func (e *LockError) Error() string {
+	return fmt.Sprintf("lock config file %s: %v", e.Path, e.Err)
+}
+
+func (e *LockError) Unwrap() error {
+	return e.Err
+}
+
 // ReadFile parses the configuration file at path. A missing file parses as an
 // empty configuration, which is what Git does; any other read error is
 // reported so a transient failure can never be mistaken for an empty file and
@@ -29,14 +43,14 @@ func ReadFile(path string) (*File, error) {
 func UpdateFile(path string, mutate func(*File) error) error {
 	target, err := resolveWritePath(path)
 	if err != nil {
-		return fmt.Errorf("resolve config path: %w", err)
+		return &LockError{Path: path, Err: fmt.Errorf("resolve config path: %w", err)}
 	}
 
 	lockPath := target + ".lock"
 
 	lock, err := os.OpenFile(lockPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o666)
 	if err != nil {
-		return fmt.Errorf("lock config file %s: %w", path, err)
+		return &LockError{Path: path, Err: err}
 	}
 
 	committed := false
@@ -87,20 +101,28 @@ func UpdateFile(path string, mutate func(*File) error) error {
 }
 
 func resolveWritePath(path string) (string, error) {
-	current, err := filepath.Abs(path)
-	if err != nil {
-		return "", err
+	if path == "" {
+		return "", os.ErrNotExist
 	}
 
-	seen := map[string]bool{}
-
-	for {
-		current = filepath.Clean(current)
-		if seen[current] {
-			return "", fmt.Errorf("symbolic link loop at %s", current)
+	for range 255 {
+		// Resolve the parent before joining: cleaning first changes symlink/.. traversal.
+		parent, name := filepath.Split(path)
+		if parent == "" {
+			parent = "."
 		}
 
-		seen[current] = true
+		resolved, err := filepath.EvalSymlinks(parent)
+		if err != nil {
+			return "", err
+		}
+
+		resolved, err = filepath.Abs(resolved)
+		if err != nil {
+			return "", err
+		}
+
+		current := filepath.Join(resolved, name)
 
 		info, err := os.Lstat(current)
 		if err != nil {
@@ -115,15 +137,15 @@ func resolveWritePath(path string) (string, error) {
 			return current, nil
 		}
 
-		target, err := os.Readlink(current)
+		path, err = os.Readlink(current)
 		if err != nil {
 			return "", err
 		}
 
-		if !filepath.IsAbs(target) {
-			target = filepath.Join(filepath.Dir(current), target)
+		if !filepath.IsAbs(path) {
+			path = resolved + string(filepath.Separator) + path
 		}
-
-		current = target
 	}
+
+	return "", fmt.Errorf("too many symbolic links in config path %s", path)
 }

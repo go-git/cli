@@ -1,8 +1,10 @@
 package main
 
 import (
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -33,9 +35,31 @@ func findGitDir() (string, error) {
 // not chdir, so it needs the absolute path to open the file and the relative
 // one to report it.
 func discoverGitDir() (string, string, error) {
-	if d := os.Getenv("GIT_DIR"); d != "" {
-		// An explicit GIT_DIR is reported exactly as it was given.
-		return d, d, nil
+	if d, present := os.LookupEnv("GIT_DIR"); present {
+		info, err := os.Stat(d)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return "", "", fmt.Errorf("%w: %s", errNoRepository, d)
+			}
+
+			return "", "", err
+		}
+
+		if info.IsDir() {
+			if isGitDir(d) {
+				return d, d, nil
+			}
+
+			return "", "", fmt.Errorf("%w: %s", errNoRepository, d)
+		}
+
+		if info.Mode().IsRegular() {
+			resolved, err := readGitFile(d)
+
+			return resolved, d, err
+		}
+
+		return "", "", fmt.Errorf("%w: %s", errNoRepository, d)
 	}
 
 	dir, err := os.Getwd()
@@ -48,7 +72,7 @@ func discoverGitDir() (string, string, error) {
 
 		info, err := os.Stat(gitPath)
 		switch {
-		case err == nil && info.IsDir():
+		case err == nil && info.IsDir() && isGitDir(gitPath):
 			return gitPath, gitDirName, nil
 		case err == nil && info.Mode().IsRegular():
 			// A linked worktree resolves to an absolute path, and git reports
@@ -90,43 +114,69 @@ func readGitFile(path string) (string, error) {
 	}
 
 	if !filepath.IsAbs(target) {
-		target = filepath.Join(filepath.Dir(path), target)
+		parent, _ := filepath.Split(path)
+		target = parent + target
 	}
 
-	target = filepath.Clean(target)
-	if !isGitDir(target) && !isLinkedWorktreeGitDir(target) {
+	if !isGitDir(target) {
 		return "", fmt.Errorf("not a git repository: %s", target)
 	}
 
 	return target, nil
 }
 
-func isLinkedWorktreeGitDir(dir string) bool {
-	data, err := os.ReadFile(filepath.Join(dir, "commondir"))
+// isGitDir validates the worktree HEAD and the shared repository directories.
+func isGitDir(dir string) bool {
+	if !validRepositoryHEAD(dir + "/HEAD") {
+		return false
+	}
+
+	common, err := commonGitDir(dir)
 	if err != nil {
 		return false
 	}
 
-	common := strings.TrimSpace(string(data))
-	if common == "" {
-		return false
-	}
-
-	if !filepath.IsAbs(common) {
-		common = filepath.Join(dir, common)
-	}
-
-	return isGitDir(filepath.Clean(common))
+	return isDir(common+"/objects") && isDir(common+"/refs")
 }
 
-// isGitDir reports whether dir is itself a git directory, which is how a bare
-// repository presents itself.
-func isGitDir(dir string) bool {
-	if _, err := os.Stat(filepath.Join(dir, "HEAD")); err != nil {
+func validRepositoryHEAD(path string) bool {
+	info, err := os.Lstat(path)
+	if err != nil {
 		return false
 	}
 
-	return isDir(filepath.Join(dir, "objects")) && isDir(filepath.Join(dir, "refs"))
+	if info.Mode()&os.ModeSymlink != 0 {
+		target, err := os.Readlink(path)
+
+		return err == nil && strings.HasPrefix(target, "refs/")
+	}
+
+	if !info.Mode().IsRegular() {
+		return false
+	}
+
+	file, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer file.Close()
+
+	data, err := io.ReadAll(io.LimitReader(file, 255))
+	if err != nil {
+		return false
+	}
+
+	if ref, ok := strings.CutPrefix(string(data), "ref:"); ok {
+		return strings.HasPrefix(strings.TrimLeft(ref, " \t\n\r\v\f"), "refs/")
+	}
+	// Repository discovery accepts detached HEADs before checking object existence.
+	if len(data) < 40 {
+		return false
+	}
+
+	_, err = hex.DecodeString(string(data[:40]))
+
+	return err == nil
 }
 
 func isDir(path string) bool {

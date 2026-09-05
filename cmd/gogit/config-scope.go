@@ -59,6 +59,13 @@ type configSource struct {
 // A location flag limits the sources to one scope. Otherwise git's default
 // precedence applies.
 func readSources(o *configOpts) ([]configSource, error) {
+	selected, err := selectConfigLocation(o)
+	if err != nil {
+		return nil, err
+	}
+
+	o = &selected
+
 	if err := validateNoSystem(); err != nil {
 		return nil, err
 	}
@@ -107,19 +114,13 @@ func readSources(o *configOpts) ([]configSource, error) {
 		}
 	}
 
-	sources, err := appendLocalConfigSources(sources)
+	sources, err = appendLocalConfigSources(sources)
 	if err != nil {
 		return nil, err
 	}
 
 	if len(configOverrideList) > 0 {
-		cwd, err := os.Getwd()
-		if err != nil {
-			return nil, err
-		}
-
 		sources = append(sources, configSource{
-			location:  configFile{path: filepath.Join(cwd, ".gitconfig-command-line")},
 			overrides: configOverrideList,
 			includes:  true,
 		})
@@ -172,6 +173,13 @@ func absoluteFile(path string) configFile {
 // writeTarget returns the single file a mutation applies to. Writes default
 // to the repository config, never to the merged view.
 func writeTarget(o *configOpts) (configFile, error) {
+	selected, err := selectConfigLocation(o)
+	if err != nil {
+		return configFile{}, err
+	}
+
+	o = &selected
+
 	if err := validateNoSystem(); err != nil {
 		return configFile{}, err
 	}
@@ -200,9 +208,25 @@ func configRepositoryError(err error) error {
 	return &gitExitError{code: exitFatal, msg: "fatal: " + err.Error()}
 }
 
+// selectConfigLocation shares file-selector presence and conflicts between reads and writes.
+func selectConfigLocation(o *configOpts) (configOpts, error) {
+	selected := *o
+	if path, present := os.LookupEnv("GIT_CONFIG"); present {
+		if o.local || o.global || o.system {
+			return configOpts{}, usageError("only one config file at a time")
+		}
+
+		if !o.fileSet {
+			selected.file, selected.fileSet = path, true
+		}
+	}
+
+	return selected, nil
+}
+
 func explicitReadFiles(o *configOpts) ([]configFile, bool, error) {
 	switch {
-	case o.file != "":
+	case o.fileSet:
 		if o.file == "-" {
 			return []configFile{{path: "-", display: "standard input"}}, true, nil
 		}
@@ -225,16 +249,7 @@ func explicitReadFiles(o *configOpts) ([]configFile, bool, error) {
 		return files, true, nil
 
 	case o.system:
-		p, ok, err := systemConfigPath()
-		if err != nil {
-			return nil, true, err
-		}
-
-		if !ok {
-			return nil, true, errors.New("system config is disabled by GIT_CONFIG_NOSYSTEM")
-		}
-
-		return []configFile{absoluteFile(p)}, true, nil
+		return []configFile{absoluteFile(systemConfigFilePath())}, true, nil
 	}
 
 	return nil, false, nil
@@ -243,7 +258,14 @@ func explicitReadFiles(o *configOpts) ([]configFile, bool, error) {
 // explicitWriteLocation resolves the single file changed by an explicit scope.
 func explicitWriteLocation(o *configOpts) (configFile, bool, error) {
 	switch {
-	case o.file != "":
+	case o.fileSet:
+		if o.file == "" {
+			return configFile{}, true, &gitExitError{
+				code: exitCannotWrite,
+				msg:  "error: could not write config file : Is a directory",
+			}
+		}
+
 		if o.file == "-" {
 			return configFile{}, true, &gitExitError{
 				code: exitFatal,
@@ -273,16 +295,7 @@ func explicitWriteLocation(o *configOpts) (configFile, bool, error) {
 		return absoluteFile(paths[len(paths)-1]), true, nil
 
 	case o.system:
-		p, ok, err := systemConfigPath()
-		if err != nil {
-			return configFile{}, true, err
-		}
-
-		if !ok {
-			return configFile{}, true, errors.New("system config is disabled by GIT_CONFIG_NOSYSTEM")
-		}
-
-		return absoluteFile(p), true, nil
+		return absoluteFile(systemConfigFilePath()), true, nil
 	}
 
 	return configFile{}, false, nil
@@ -365,15 +378,17 @@ func systemConfigPath() (string, bool, error) {
 		return "", false, nil
 	}
 
-	if p, ok := os.LookupEnv("GIT_CONFIG_SYSTEM"); ok {
-		if p == "" || p == os.DevNull {
-			return "", false, nil
-		}
+	path := systemConfigFilePath()
 
-		return p, true, nil
+	return path, path != "" && path != os.DevNull, nil
+}
+
+func systemConfigFilePath() string {
+	if path, ok := os.LookupEnv("GIT_CONFIG_SYSTEM"); ok {
+		return path
 	}
 
-	return defaultSystemConfigPath(), true, nil
+	return defaultSystemConfigPath()
 }
 
 func validateNoSystem() error {
@@ -461,7 +476,11 @@ func localConfigFile() (configFile, error) {
 		return configFile{}, err
 	}
 
-	common := commonGitDir(gitDir)
+	common, err := commonGitDir(gitDir)
+	if err != nil {
+		return configFile{}, err
+	}
+
 	if common != gitDir {
 		// Resolving through commondir yields an absolute path, and that is
 		// what git reports for a linked worktree.
@@ -469,7 +488,7 @@ func localConfigFile() (configFile, error) {
 	}
 
 	return configFile{
-		path: filepath.Join(common, "config"),
+		path: common + "/config",
 		// Concatenated rather than joined: git names a bare repository's
 		// config "./config", which filepath.Join would clean to "config".
 		display: display + "/config",
@@ -517,7 +536,7 @@ func worktreeConfigFile(local *gitconfig.File) (configFile, bool, error) {
 	}
 
 	return configFile{
-		path:    filepath.Join(gitDir, "config.worktree"),
+		path:    gitDir + "/config.worktree",
 		display: display + "/config.worktree",
 	}, true, nil
 }
@@ -541,20 +560,24 @@ func gitBool(value string, implicit bool) (bool, bool) {
 
 // commonGitDir follows a linked worktree's `commondir` pointer back to the
 // main git directory, which is where shared state such as config lives.
-func commonGitDir(gitDir string) string {
-	data, err := os.ReadFile(filepath.Join(gitDir, "commondir"))
-	if err != nil {
-		return gitDir
+func commonGitDir(gitDir string) (string, error) {
+	data, err := os.ReadFile(gitDir + "/commondir")
+	if os.IsNotExist(err) {
+		return gitDir, nil
 	}
 
-	common := strings.TrimSpace(string(data))
+	if err != nil {
+		return "", err
+	}
+
+	common := strings.TrimRight(string(data), "\r\n")
 	if common == "" {
-		return gitDir
+		return "", errors.New("empty commondir")
 	}
 
 	if !filepath.IsAbs(common) {
-		common = filepath.Join(gitDir, common)
+		common = gitDir + "/" + common
 	}
 
-	return filepath.Clean(common)
+	return filepath.EvalSymlinks(common)
 }

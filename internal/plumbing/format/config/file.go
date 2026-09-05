@@ -89,6 +89,10 @@ type optionRec struct {
 // understood and then rewritten.
 func Parse(data []byte) (*File, error) {
 	p := &parser{data: data, line: 1, f: &File{data: data}}
+	if len(data) >= 3 && data[0] == 0xef && data[1] == 0xbb && data[2] == 0xbf {
+		p.pos = 3
+	}
+
 	if err := p.run(); err != nil {
 		return nil, err
 	}

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -70,17 +71,17 @@ func applyConfigOverridesFromFlags() error {
 		implicit := !ok
 
 		if !ok {
+			if raw == "" || strings.HasPrefix(raw, "=") {
+				return commandLineConfigError(errors.New("empty config key"))
+			}
+
 			k = raw
 			v = ""
-
-			if k == "" {
-				return fmt.Errorf("invalid -c value %q", raw)
-			}
 		}
 
 		key, kerr := gitconfig.ParseKey(k)
 		if kerr != nil {
-			return fmt.Errorf("invalid -c value %q: %w", raw, kerr)
+			return commandLineConfigError(kerr)
 		}
 
 		configOverrideList = append(configOverrideList, configOverride{
@@ -91,6 +92,13 @@ func applyConfigOverridesFromFlags() error {
 	}
 
 	return nil
+}
+
+func commandLineConfigError(err error) error {
+	return &gitExitError{
+		code: exitFatal,
+		msg:  fmt.Sprintf("error: %v\nfatal: unable to parse command-line config", err),
+	}
 }
 
 // hasConfigOverride reports whether key has been explicitly set via -c.

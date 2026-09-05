@@ -60,7 +60,13 @@ func init() {
 func init() {
 	rootCmd.PersistentFlags().StringArrayVarP(&configOverridesRaw, "config", "c", nil,
 		"Override a configuration value for the duration of this command (key=value, may be repeated)")
-	rootCmd.PersistentPreRunE = func(_ *cobra.Command, _ []string) error {
+	rootCmd.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
+		if cmd == configCmd || cmd.Parent() == configCmd {
+			if err := validateNoSystem(); err != nil {
+				return err
+			}
+		}
+
 		return applyConfigOverridesFromFlags()
 	}
 }

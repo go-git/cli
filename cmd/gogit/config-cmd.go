@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/user"
-	"path/filepath"
 	"strings"
 
 	gitconfig "github.com/go-git/cli/internal/plumbing/format/config"
@@ -16,20 +15,23 @@ import (
 const (
 	exitNotFound      = 1   // the key was not found
 	exitInvalidKey    = 1   // the section or key is invalid
+	exitCannotWrite   = 4   // the requested config file cannot be written
 	exitUnsetMissing  = 5   // unset of a key that does not exist
 	exitCannotReplace = 5   // single value cannot replace several
 	exitFatal         = 128 // the config file could not be read
 	exitUsage         = 129 // the command invocation is malformed
+	exitLockFailure   = 255 // the config lock could not be acquired
 )
 
 // configOpts holds the flags shared by `config`, `config get`, `config set`
 // and `config unset`. Each command owns its own instance so the modern and
 // legacy spellings stay independently parseable.
 type configOpts struct {
-	file   string
-	local  bool
-	global bool
-	system bool
+	file    string
+	fileSet bool
+	local   bool
+	global  bool
+	system  bool
 
 	all  bool
 	path bool
@@ -62,8 +64,9 @@ func (o *configOpts) registerLocation(cmd *cobra.Command) {
 func init() {
 	for _, cmd := range []*cobra.Command{configCmd, configGetCmd, configSetCmd, configUnsetCmd} {
 		cmd.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
-			return usageError(err.Error())
+			return configInvocationError(err)
 		})
+		cmd.Flags().SetInterspersed(false)
 	}
 
 	legacyOpts.registerLocation(configCmd)
@@ -107,10 +110,14 @@ var configCmd = &cobra.Command{
 }
 
 var configGetCmd = &cobra.Command{
-	Use:                   "get [<options>] <key>",
-	Short:                 "Print the value of a configuration key",
-	Args:                  configArgs(cobra.ExactArgs(1)),
-	RunE:                  func(_ *cobra.Command, args []string) error { return runConfigGet(&getOpts, args[0]) },
+	Use:   "get [<options>] <key>",
+	Short: "Print the value of a configuration key",
+	Args:  configArgs(cobra.ExactArgs(1)),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		getOpts.fileSet = cmd.Flags().Changed("file")
+
+		return runConfigGet(&getOpts, args[0])
+	},
 	DisableFlagsInUseLine: true,
 	SilenceUsage:          true,
 	SilenceErrors:         true,
@@ -120,7 +127,9 @@ var configSetCmd = &cobra.Command{
 	Use:   "set [<options>] <key> <value>",
 	Short: "Set the value of a configuration key",
 	Args:  configArgs(cobra.ExactArgs(2)),
-	RunE: func(_ *cobra.Command, args []string) error {
+	RunE: func(cmd *cobra.Command, args []string) error {
+		setOpts.fileSet = cmd.Flags().Changed("file")
+
 		return runConfigWrite(&setOpts, args[0], args[1], writeSet)
 	},
 	DisableFlagsInUseLine: true,
@@ -132,7 +141,9 @@ var configUnsetCmd = &cobra.Command{
 	Use:   "unset [<options>] <key>",
 	Short: "Remove a configuration key",
 	Args:  configArgs(cobra.ExactArgs(1)),
-	RunE: func(_ *cobra.Command, args []string) error {
+	RunE: func(cmd *cobra.Command, args []string) error {
+		unsetOpts.fileSet = cmd.Flags().Changed("file")
+
 		return runConfigWrite(&unsetOpts, args[0], "", writeUnset)
 	},
 	DisableFlagsInUseLine: true,
@@ -141,7 +152,9 @@ var configUnsetCmd = &cobra.Command{
 }
 
 // runConfigLegacy dispatches the pre-subcommand spellings of git config.
-func runConfigLegacy(_ *cobra.Command, args []string) error {
+func runConfigLegacy(cmd *cobra.Command, args []string) error {
+	legacyOpts.fileSet = cmd.Flags().Changed("file")
+
 	switch {
 	case legacyGet, legacyGetAll:
 		if len(args) != 1 {
@@ -288,7 +301,7 @@ func runConfigWrite(o *configOpts, rawKey, value string, mode writeMode) error {
 		return nil
 	})
 	if err != nil {
-		return configReadError(target, err)
+		return configWriteError(target, err)
 	}
 
 	return nil
@@ -316,22 +329,51 @@ func configReadError(cf configFile, err error) error {
 	return err
 }
 
+func configWriteError(cf configFile, err error) error {
+	var lockErr *gitconfig.LockError
+	if errors.As(err, &lockErr) {
+		detail := lockErr.Err.Error()
+		if errors.Is(lockErr.Err, os.ErrExist) {
+			detail = "File exists"
+		}
+
+		return &gitExitError{
+			code: exitLockFailure,
+			msg:  fmt.Sprintf("error: could not lock config file %s: %s", cf.display, detail),
+		}
+	}
+
+	return configReadError(cf, err)
+}
+
 func usageError(msg string) error {
 	return &gitExitError{code: exitUsage, msg: "error: " + msg}
 }
 
 func configArgs(validate cobra.PositionalArgs) cobra.PositionalArgs {
 	return func(cmd *cobra.Command, args []string) error {
+		if err := validateNoSystem(); err != nil {
+			return err
+		}
+
 		if err := validate(cmd, args); err != nil {
-			return usageError(err.Error())
+			return configInvocationError(err)
 		}
 
 		if err := cmd.ValidateFlagGroups(); err != nil {
-			return usageError(err.Error())
+			return configInvocationError(err)
 		}
 
 		return nil
 	}
+}
+
+func configInvocationError(err error) error {
+	if envErr := validateNoSystem(); envErr != nil {
+		return envErr
+	}
+
+	return usageError(err.Error())
 }
 
 // expandPath applies --path canonicalization: a leading ~ becomes the user's
@@ -351,18 +393,18 @@ func expandPath(v string) (string, error) {
 			return home, nil
 		}
 
-		return filepath.Join(home, v[2:]), nil
+		return home + "/" + v[2:], nil
 	}
 
-	name, suffix, _ := strings.Cut(v[1:], "/")
+	name, suffix, hasSlash := strings.Cut(v[1:], "/")
 
 	account, err := user.Lookup(name)
 	if err == nil && account.HomeDir != "" {
-		if suffix == "" {
+		if !hasSlash {
 			return account.HomeDir, nil
 		}
 
-		return filepath.Join(account.HomeDir, suffix), nil
+		return account.HomeDir + "/" + suffix, nil
 	}
 
 	return "", &gitExitError{
