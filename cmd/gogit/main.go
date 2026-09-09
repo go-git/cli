@@ -60,7 +60,13 @@ func init() {
 func init() {
 	rootCmd.PersistentFlags().StringArrayVarP(&configOverridesRaw, "config", "c", nil,
 		"Override a configuration value for the duration of this command (key=value, may be repeated)")
-	rootCmd.PersistentPreRunE = func(_ *cobra.Command, _ []string) error {
+	rootCmd.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
+		if cmd == configCmd || cmd.Parent() == configCmd {
+			if err := validateNoSystem(); err != nil {
+				return err
+			}
+		}
+
 		return applyConfigOverridesFromFlags()
 	}
 }
@@ -82,6 +88,18 @@ func main() {
 
 	err := rootCmd.Execute()
 	if err != nil {
+		// Some commands need git's own exit statuses, and git stays
+		// silent for several of them, so gitExitError carries both the
+		// code and whether anything is printed.
+		var gerr *gitExitError
+		if errors.As(err, &gerr) {
+			if gerr.msg != "" {
+				fmt.Fprintln(os.Stderr, gerr.msg)
+			}
+
+			os.Exit(gerr.code)
+		}
+
 		var rerr *transport.RemoteError
 		if errors.As(err, &rerr) {
 			fmt.Fprintln(os.Stderr, rerr)

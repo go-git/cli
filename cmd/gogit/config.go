@@ -1,18 +1,34 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
 
+	gitconfig "github.com/go-git/cli/internal/plumbing/format/config"
 	"github.com/go-git/go-git/v6/config"
 )
 
 var (
 	configOverridesRaw []string
 	configOverrides    = map[string]string{}
+	configImplicit     = map[string]bool{}
 	configOverrideMu   sync.Mutex
+
+	// configOverrideList keeps the -c overrides in the order they were given
+	// and with their keys normalised, which the config command needs to
+	// report repeated values and to match subsection spellings. The map above
+	// stays keyed by the raw string for the existing callers.
+	configOverrideList []configOverride
 )
+
+// configOverride is a single -c key=value pair with its key parsed.
+type configOverride struct {
+	key      gitconfig.Key
+	value    string
+	implicit bool
+}
 
 // splitKV splits "<key>=<value>" into (key, value, true). Invalid input
 // (no '=' or empty key) returns ("", "", false). Empty value is allowed.
@@ -26,10 +42,15 @@ func splitKV(s string) (string, string, bool) {
 }
 
 func applyConfigOverride(key, value string) {
+	applyConfigOverrideValue(key, value, false)
+}
+
+func applyConfigOverrideValue(key, value string, implicit bool) {
 	configOverrideMu.Lock()
 	defer configOverrideMu.Unlock()
 
 	configOverrides[key] = value
+	configImplicit[key] = implicit
 }
 
 func resetConfigOverrides() {
@@ -37,7 +58,9 @@ func resetConfigOverrides() {
 	defer configOverrideMu.Unlock()
 
 	configOverrides = map[string]string{}
+	configImplicit = map[string]bool{}
 	configOverridesRaw = nil
+	configOverrideList = nil
 }
 
 // applyConfigOverridesFromFlags parses raw `-c k=v` values previously captured
@@ -45,14 +68,37 @@ func resetConfigOverrides() {
 func applyConfigOverridesFromFlags() error {
 	for _, raw := range configOverridesRaw {
 		k, v, ok := splitKV(raw)
+		implicit := !ok
+
 		if !ok {
-			return fmt.Errorf("invalid -c value %q (want key=value)", raw)
+			if raw == "" || strings.HasPrefix(raw, "=") {
+				return commandLineConfigError(errors.New("empty config key"))
+			}
+
+			k = raw
+			v = ""
 		}
 
-		applyConfigOverride(k, v)
+		key, kerr := gitconfig.ParseKey(k)
+		if kerr != nil {
+			return commandLineConfigError(kerr)
+		}
+
+		configOverrideList = append(configOverrideList, configOverride{
+			key: key, value: v, implicit: implicit,
+		})
+
+		applyConfigOverrideValue(k, v, implicit)
 	}
 
 	return nil
+}
+
+func commandLineConfigError(err error) error {
+	return &gitExitError{
+		code: exitFatal,
+		msg:  fmt.Sprintf("error: %v\nfatal: unable to parse command-line config", err),
+	}
 }
 
 // hasConfigOverride reports whether key has been explicitly set via -c.
@@ -68,15 +114,20 @@ func hasConfigOverride(key string) bool {
 // Lookup order: -c override > defaultVal. Empty-string override means false.
 // repoCfg is accepted for future expansion but not consulted in v1.
 //
-//nolint:unparam // key/repoCfg used by future callers (Task 7+).
+//nolint:unparam // repoCfg is part of the shared config helper contract.
 func configBool(key string, repoCfg *config.Config, defaultVal bool) bool {
 	configOverrideMu.Lock()
 	v, ok := configOverrides[key]
+	implicit := configImplicit[key]
 	configOverrideMu.Unlock()
 
 	_ = repoCfg
 
 	if ok {
+		if implicit {
+			return true
+		}
+
 		return strings.EqualFold(v, "true")
 	}
 
