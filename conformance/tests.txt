@@ -1,11 +1,58 @@
 # Curated upstream tests run against gogit.
 # Add one filename per line. Lines starting with # are ignored.
+# Optional tokens after the filename, in any order:
+#   `@sha1,sha256` — comma-separated hash modes this entry participates in
+#                    (default: sha1 only).
+#   selector       — upstream `--run=` form, e.g. `1-5,7` or `!2`.
 
-t2008-checkout-subdir.sh
-t5308-pack-detect-duplicates.sh
+t2008-checkout-subdir.sh @sha1,sha256
+t5308-pack-detect-duplicates.sh @sha1,sha256
+# t5325 stays sha1-only: setup case 1 fails in sha256 mode with
+# "malformed pack file: checksum mismatch" — gogit's pack writer
+# produces a sha256-formatted pack whose trailer doesn't round-trip
+# through go-git's reader. Real bug worth filing separately.
 t5325-reverse-index.sh
-t1600-index.sh 1-5,7
+t1600-index.sh @sha1,sha256 1-5,7
+# t1601 stays sha1-only: the premise is "tree with null sha1" / "read-tree
+# refuses null sha1", which doesn't translate to sha256 — building the
+# same tree under sha256 produces a non-null sha256 hash and the
+# null-rejection no longer triggers.
 t1601-index-bogus.sh
+# t0001 sha256 surface — runtime-numbered cases (the `for hash in sha1 sha256`
+# loop expands 1 source-level case into 2, shifting the upper cases by one):
+#   52 init honors GIT_DEFAULT_HASH
+#   53 init honors --object-format
+#   56 --object-format overrides GIT_DEFAULT_HASH
+#   60 extensions.objectFormat is not allowed with repo version 0
+#   61 init rejects attempts to initialize with different hash
+t0001-init.sh @sha1,sha256 52,53,56,60,61
+# t1007 hash-object: core hashing surface (file, stdin, -w, bogus type names,
+# --literally, --stdin outside a repo). Excluded cases need flags gogit lacks
+# (--stdin-paths, --path, --no-filters), crlf filtering, or strict
+# malformed-object validation. Both modes exercise the sha256 OIDs baked into
+# the upstream test's oid cache.
+t1007-hash-object.sh @sha1,sha256 1,3-12,20-23,37-40
+# t3700 add: cases that exercise `add` + the new `ls-files` reader. Includes
+# the index round-trip case 3 ("Post-check that foo is in the index"), which
+# in sha256 mode also verifies that index entries carry 32-byte hashes.
+# Excluded cases need gogit surface that doesn't exist yet (--chmod,
+# --refresh, --ignore-errors, core.fsyncmethod=batch, update-index --add,
+# unmerged-entry handling, embedded-repo detection).
+t3700-add.sh @sha1,sha256 1,3,4,12,13,20,21,34,36,40,42,44
+# t7501 commit: smoke coverage — argument validation and error paths around
+# `git commit`. The cases that actually create commits in this script chain
+# off case 1 ("initial status", which exercises `git status` output gogit
+# doesn't match), so we can't graduate them in selector mode. End-to-end
+# init/add/commit round-trip in sha256 is covered by go-git's own tests.
+t7501-commit-basic-functionality.sh @sha1,sha256 2,6,9,11-14,26,27,34,41,57
+# t5601 clone: case 7 ("clone checks out files") is the real transport probe
+# — sha1 or sha256 source repo is built in case 1's setup, then cloned via
+# local-path resolution (handled by gogit's clone wrapper). The other cases
+# cover URL parsing (27, 70-72 deferred — they need an ssh-wrapper setup),
+# excess-argument validation, and non-empty-target rejection. Cases that
+# need richer clone surface (--bare, --mirror, --separate-git-dir, depth,
+# hooks, partial clone, ssh) stay deferred.
+t5601-clone.sh @sha1,sha256 1-3,7,22,23,27,59
 #
 # Not yet graduated:
 #
