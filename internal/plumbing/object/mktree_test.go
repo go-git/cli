@@ -71,7 +71,7 @@ func TestWriteTreeRawAcceptsNullHash(t *testing.T) {
 	t.Parallel()
 
 	store := memory.NewStorage()
-	_ = (storer.EncodedObjectStorer)(store) // type assertion check
+	_ = storer.EncodedObjectStorer(store) // type assertion check
 
 	obj := store.NewEncodedObject()
 	obj.SetType(plumbing.TreeObject)
