@@ -69,7 +69,7 @@ var catFileCmd = &cobra.Command{
 // catFileExistsCheck never returns: it calls os.Exit(1) when the object is
 // absent and os.Exit(0) when it is present. The signature returns error only
 // to fit cobra's RunE contract via its caller.
-func catFileExistsCheck(r *git.Repository, oid string) error { //nolint:unparam
+func catFileExistsCheck(r *git.Repository, oid string) error {
 	h := plumbing.NewHash(oid)
 	if _, err := r.Storer.EncodedObject(plumbing.AnyObject, h); err != nil {
 		os.Exit(1)
@@ -122,7 +122,7 @@ func catFileBatchCheckRun(cmd *cobra.Command, r *git.Repository, stdin io.Reader
 			continue
 		}
 
-		oid := strings.SplitN(raw, " ", 2)[0]
+		oid, _, _ := strings.Cut(raw, " ")
 
 		h := plumbing.NewHash(oid)
 
