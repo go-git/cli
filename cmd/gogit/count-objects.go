@@ -52,15 +52,15 @@ func repoGitDir(r *git.Repository) string {
 
 	wd, err := os.Getwd()
 	if err != nil {
-		return ".git"
+		return gitDirName
 	}
 
-	candidate := filepath.Join(wd, ".git")
+	candidate := filepath.Join(wd, gitDirName)
 	if _, err := os.Stat(candidate); err == nil {
 		return candidate
 	}
 
-	return ".git"
+	return gitDirName
 }
 
 // walkLooseObjects sums loose object count and bytes under <gitDir>/objects.
