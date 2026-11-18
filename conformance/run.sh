@@ -10,6 +10,26 @@ BUILD_SNAPSHOT="$CACHE_DIR/build"
 
 mkdir -p "$BIN_DIR" "$RESULTS_DIR"
 
+# Optional --hash=<sha1|sha256> flag controls which mode this run executes.
+# When set, GIT_TEST_DEFAULT_HASH is exported before each test script and only
+# tests.txt entries whose `@modes` list contains the value participate. Default
+# is sha1, which keeps single-test invocations and pre-modes tests.txt entries
+# working unchanged.
+HASH_MODE="sha1"
+RUN_ARGS=()
+for arg in "$@"; do
+    case "$arg" in
+        --hash=*) HASH_MODE="${arg#--hash=}" ;;
+        *)        RUN_ARGS+=("$arg") ;;
+    esac
+done
+set -- "${RUN_ARGS[@]+${RUN_ARGS[@]}}"
+
+case "$HASH_MODE" in
+    sha1|sha256) ;;
+    *) echo "Unknown --hash=$HASH_MODE (expected sha1 or sha256)" >&2; exit 2 ;;
+esac
+
 # Optional go-git ref override: snapshot go.mod/go.sum, bump, restore on exit.
 if [ -n "${GO_GIT_REF:-}" ]; then
     mkdir -p "$BUILD_SNAPSHOT"
@@ -108,12 +128,11 @@ elif [ -n "${TESTS:-}" ]; then
     read -r -a TESTS_TO_RUN <<< "$TESTS"
     SELECTOR=""
 else
-    # Read curated list, ignoring blank lines and comments.
-    # Each non-comment line in tests.txt is either `<filename>` or
-    # `<filename> <selector>`. The selector is the same form upstream's
-    # --run= accepts (e.g. `1-5,7`, `!2`). It is forwarded to the test
-    # script so a single test can be graduated with a subset of its cases
-    # (used for t1600 which has a submodule case out of scope here).
+    # Each non-comment line in tests.txt is `<filename>` followed by any number
+    # of optional whitespace-separated tokens. A token starting with `@` is the
+    # comma-separated mode list (sha1, sha256). Other tokens are the upstream
+    # selector (`--run=` form, e.g. `1-5,7`). Order between selector and mode
+    # list is free. When no `@` token is present, the entry runs in sha1 only.
     TESTS_TO_RUN=()
     TESTS_SELECTORS=()
     while IFS= read -r line; do
@@ -121,11 +140,23 @@ else
             ''|\#*) continue ;;
         esac
 
-        name="${line%% *}"
+        name=""
         sel=""
-        if [ "$name" != "$line" ]; then
-            sel="${line#"$name" }"
-            sel="${sel## }"
+        modes="sha1"
+        for tok in $line; do
+            if [ -z "$name" ]; then
+                name="$tok"
+                continue
+            fi
+
+            case "$tok" in
+                @*) modes="${tok#@}" ;;
+                *)  sel="$tok" ;;
+            esac
+        done
+
+        if ! echo ",$modes," | grep -q ",$HASH_MODE,"; then
+            continue
         fi
 
         TESTS_TO_RUN+=("$name")
@@ -193,6 +224,7 @@ for i in "${!TESTS_TO_RUN[@]}"; do
     if [ -n "$per_test_sel" ]; then
         selector_args=(--run="$per_test_sel")
     fi
+    export GIT_TEST_DEFAULT_HASH="$HASH_MODE"
     # 2>&1 inside the subshell so the upstream `-v` trace, which goes to the
     # test script's stderr, also reaches summary_filter; otherwise it would
     # bypass the grep and leak straight to our stderr in summary mode.
